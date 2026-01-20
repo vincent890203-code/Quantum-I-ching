@@ -35,14 +35,15 @@ class Settings:
         default_factory=lambda: date.today().isoformat()
     )
     TARGET_TICKERS: list[str] = dataclasses.field(
-        default_factory=lambda: ["AAPL", "NVDA", "TSLA", "MSFT", "GOOGL", "AMD"]
+        # 預設改為台股常見標的，方便本系統以台灣市場為主
+        default_factory=lambda: ["2330.TW", "2317.TW", "2454.TW"]
         # 根據 MARKET_TYPE 可以設定不同的範例：
         # US: ["AAPL", "NVDA", "TSLA", "MSFT", "GOOGL", "AMD"]
         # TW: ["2330.TW", "2317.TW", "2454.TW"]
         # CRYPTO: ["BTC-USD", "ETH-USD", "SOL-USD"]
     )
     YIN_YANG_THRESHOLD: float = 0.0
-    MARKET_TYPE: str = "US"  # 選項：'US', 'TW', 'CRYPTO'
+    MARKET_TYPE: str = "TW"  # 選項：'US', 'TW', 'CRYPTO'
 
 
 # 六十四卦對照表

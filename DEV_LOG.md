@@ -2508,3 +2508,128 @@ train_loader, test_loader = processor.split_data(X_num, X_hex, y)
     * 進度條（Train / Val）
     * `Train Loss` / `Val Loss`
     * Early Stopping 訊息與最佳模型儲存提示。
+
+---
+
+## 2026-01-20 | Phase 4 - Streamlit Dashboard 與前端除錯
+
+### 步驟 12: 建立 Web 儀表板介面 (`dashboard.py`)
+
+**日期**: 2026-01-20  
+**狀態**: ✅ 完成
+
+#### 設計目標
+
+- 提供一個 **淺色、專業金融風格** 的 Streamlit 前端，讓使用者可以：
+  - 輸入股票代號（以台股為主，同時支援美股／加密貨幣）。
+  - 看到最近 60 日 K 線圖。
+  - 查看對應的 I-Ching 市場卦象（六爻視覺化）。
+  - 取得由 `Oracle`（Gemini + RAG）產生的卜卦解讀。
+- 保持良好效能：避免每次互動都重新載入向量資料庫與 Gemini 模型。
+
+#### 主要實作重點
+
+1. **頁面結構與樣式**
+   - 使用 `st.set_page_config(layout="wide", page_title="Quantum I-Ching")`。
+   - 採用淺色金融風格：
+     - 背景 `#f0f2f6`，主要卡片白底＋圓角＋陰影。
+     - 深灰文字 `#333333`，提高可讀性。
+   - 左側 `Sidebar`：
+     - 標題：`🔮 設定 (Settings)`。
+     - `user_ticker`：股票代號輸入欄（台股可直接輸入如 `2330`、`2317`）。
+     - `question`：問題輸入欄（預設：「Should I buy now? / 我現在該買嗎？」）。
+     - 執行按鈕：`Consult the Oracle (卜卦)`。
+     - 說明與免責：強調目前以台股／美股為主，內容僅供研究與教育參考，非投資建議。
+   - 主畫面：
+     - 標題：`Quantum I-Ching 股市卜卦系統`。
+     - `col_chart, col_hex = st.columns([2, 1])`：
+       - 左側 2/3：K 線圖。
+       - 右側 1/3：I-Ching 市場卦象卡片。
+
+2. **Oracle 資源快取**
+   - 使用 `@st.cache_resource` 包裝 `get_oracle()`：
+     - 僅在第一次載入時初始化 `Oracle`，後續互動共用同一個實例。
+     - 避免每次重新載入 Chroma 向量庫與 Gemini 模型。
+
+3. **台股代碼支援與股票名稱顯示**
+   - 前端處理 ticker：
+     - 若 `user_ticker.isdigit()` → 自動補上 `.TW`（例如 `2330` → `2330.TW`），作為 `backend_ticker`。
+     - 其他格式（已含 `.` 或 `-`）直接視為完整代碼。
+   - 資料抓取：
+     - `raw_df = oracle.data_loader.fetch_data(tickers=[backend_ticker])`。
+   - 股票名稱顯示：
+     - 使用 `oracle.data_loader._format_ticker(backend_ticker)` 搭配 `yf.Ticker(...).info` 取得 `shortName` / `longName`。
+     - K 線圖標題格式：
+       - 若有名稱：`{user_ticker} ({stock_name}) - {chinese_name} / {hexagram_name} (最近 60 日價格走勢)`。
+       - 否則：`{user_ticker} - {chinese_name} / {hexagram_name} (最近 60 日價格走勢)`。
+
+4. **卦象生成與視覺化**
+   - 利用後端現有流程：
+     - `encoded_df = oracle.encoder.generate_hexagrams(raw_df)`。
+     - 檢查 `Ritual_Sequence` / `Hexagram_Binary` 是否存在且非空。
+     - 將 `Ritual_Sequence` 轉為 `List[int]`，長度必須等於 6。
+     - 透過 `oracle.core.interpret_sequence(ritual_sequence)` 取得 `current_hex`。
+   - 視覺化函式 `draw_hexagram(ritual_seq, binary_string, name)`：
+     - 以 HTML/CSS 畫出 6 條爻線，上爻在上、初爻在下。
+     - 陽爻（1）：深藍實線 `#004e92`。
+     - 陰爻（0）：左右兩段紅橘實線 `#d9534f`，中間留白。
+     - 左側標出「上爻、五爻、四爻、三爻、二爻、初爻」。
+     - 底部顯示 `Ritual` / `Binary` / `Hexagram` 的 meta 訊息。
+
+5. **K 線圖**
+   - 採樣最近 60 日資料：`chart_df = raw_df.tail(60)`。
+   - 使用 Plotly `go.Candlestick`：
+     - 模板 `template="plotly_white"`。
+     - 背景 `paper_bgcolor="#ffffff"`、`plot_bgcolor="#ffffff"`。
+     - 陽線綠色 `#22c55e`、陰線紅色 `#ef4444`。
+     - 關閉 range slider，`use_container_width=True` 提供自適應寬度。
+
+6. **AI 卜卦解讀區塊**
+   - 放置在整個兩欄佈局下方，靠近 K 線圖之後，標題為：
+     - `### 🧠 Oracle's Advice / 卜卦解讀`
+   - 內容：
+     - 呼叫 `ai_answer = oracle.ask(backend_ticker, question or "Should I buy now?")`。
+     - 使用 Streamlit 內建 `st.info(ai_answer)`，讓整段 Markdown 文字（含各小標）被單一框線完整包覆。
+     - 使用 `st.caption(...)` 顯示免責聲明（僅供參考，非投資建議）。
+
+#### 前端除錯紀錄
+
+1. **暗色 Cyberpunk UI 不易閱讀**
+   - 問題：初版使用深色背景＋霓虹風格，字體對比不足、使用者覺得「醜」、「難讀」。
+   - 修正：
+     - 調整為淺色主題，背景灰＋白底卡片。
+     - 使用較大字級與深灰文字色，提高閱讀性。
+
+2. **台股代碼無法抓到資料**
+   - 問題：`MARKET_TYPE` 預設為 `"US"`，`_format_ticker("2330")` 回傳 `"2330"`，yfinance 對美股代碼 `2330` 無資料。
+   - 修正：
+     - 在 `config.py` 將 `MARKET_TYPE` 改為 `"TW"`，`TARGET_TICKERS` 改為台股範例。
+     - 另外在前端強制數字代碼自動補 `.TW`，即使後端市場設定未調整，仍可正確抓到台股資料。
+
+3. **NameError: `ticker` 未定義**
+   - 問題：在圖表標題中使用了不存在的變數 `ticker`。
+   - 修正：
+     - 統一使用 `user_ticker`（顯示用）與 `backend_ticker`（實際查詢用），並在圖表標題中改成 `user_ticker`。
+
+4. **卜卦解讀區塊位置與外框問題**
+   - 問題 1：`Oracle's Advice` 一開始與卦象放在同欄，導致版面擁擠、捲動體驗差。
+   - 問題 2：自訂 HTML 卡片外框（`.oracle-advice`）曾出現只包到標題、未完全包覆所有文字的視覺問題。
+   - 修正：
+     - 將 AI 解讀移到 K 線圖下方，整行寬度一致，閱讀動線清楚。
+     - 改用 `st.info(ai_answer)` 取代客製 HTML 容器，確保整段文字（含 Markdown）自動被完整框線包對齊。
+
+5. **TW 股票名稱顯示與卦象名稱混淆**
+   - 說明：
+     - K 線圖與左側標題顯示的是 **股票名稱**（例如 `3661.TW (ALCHIP TECHNOLOGIES LIMITD)`，即世芯-KY）。
+     - `I-Ching 市場卦象` 內的「卦名：中孚 (Zhong Fu, ID: 61)」是根據最近 6 日市場結構算出的 **易經卦象名稱**，並非公司名稱。
+   - 處理：
+     - 在介面文案與變數命名上，明確區分「股票名稱」與「卦象名稱」，避免使用者混淆。
+
+6. **Streamlit 互動中斷／未顯示結果的誤會**
+   - 問題：使用者以為下方沒有任何結果，其實 AI 卜卦解讀在頁面下方，但一開始版面設計需要額外捲動才看得到。
+   - 修正：
+     - 重新安排行為順序與版面，確保：
+       - 按下「卜卦」後，K 線圖、卦象與 AI 解讀都在第一屏或輕微捲動即可完全看到。
+
+---
+
