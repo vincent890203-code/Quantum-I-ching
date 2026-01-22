@@ -1,7 +1,7 @@
 """Quantum I-Ching 專案市場資料編碼模組.
 
 此模組將股票市場資料轉換為易經六十四卦的表示方式。
-使用「Whale Volume Weighting」邏輯將價格變動映射到四象（6, 7, 8, 9）。
+使用「大衍之數」(Da Yan Zhi Shu) 機率分布，以 RVOL 百分位數作為能量代理變數。
 """
 
 from typing import Optional
@@ -16,35 +16,39 @@ class MarketEncoder:
     """市場資料編碼器類別.
 
     將股票價格資料轉換為易經卦象表示。
-    使用相對成交量（RVOL）和價格變動率來判斷四象（老陽、少陽、老陰、少陰）。
+    使用「大衍之數」傳統機率分布，以 RVOL 百分位數映射到四象（老陽、少陽、老陰、少陰）。
     
-    四象對應：
-    - 9 (老陽 / 變動之陽): 上漲且成交量異常放大（RVOL > 2.0）
-    - 7 (少陽 / 靜止之陽): 上漲但成交量正常（RVOL <= 2.0）
-    - 8 (少陰 / 靜止之陰): 下跌但成交量正常（RVOL <= 2.0）
-    - 6 (老陰 / 變動之陰): 下跌且成交量異常放大（RVOL > 2.0）
+    大衍之數機率分布：
+    - 6 (老陰 / 變動之陰): 1/16 (6.25%) - 極低能量，往往預示突破
+    - 8 (少陰 / 靜止之陰): 7/16 (43.75%) - 低-中能量，靜態市場
+    - 7 (少陽 / 靜止之陽): 5/16 (31.25%) - 中-高能量，活躍但靜態市場
+    - 9 (老陽 / 變動之陽): 3/16 (18.75%) - 極高能量，突破
     """
 
     def _calculate_technical_indicators(
         self,
-        df: pd.DataFrame
+        df: pd.DataFrame,
+        rvol_window: int = 120
     ) -> pd.DataFrame:
         """計算技術指標.
 
-        計算日報酬率、20日均量，以及相對成交量（RVOL）。
+        計算日報酬率、20日均量、相對成交量（RVOL），以及 RVOL 百分位數。
 
         Args:
             df: 包含 Open, High, Low, Close, Volume 欄位的 DataFrame。
                 可以是標準 DataFrame 或 MultiIndex DataFrame。
+            rvol_window: 用於計算 RVOL 百分位數的滾動窗口大小（預設 120 天）。
 
         Returns:
             新增了以下欄位的 DataFrame：
             - Daily_Return: 日報酬率（Close 的百分比變動）
             - Volume_MA20: 20日成交量移動平均
             - RVOL: 相對成交量（Volume / Volume_MA20）
+            - RVOL_Percentile: RVOL 的百分位數排名（0.0-1.0）
 
         Note:
             - 前20天的 Volume_MA20 和 RVOL 會是 NaN
+            - 前 rvol_window 天的 RVOL_Percentile 會是 NaN（需要足夠歷史資料）
             - 除以零的情況會被處理（RVOL 設為 NaN）
         """
         df = df.copy()
@@ -78,59 +82,82 @@ class MarketEncoder:
             np.nan
         )
 
+        # 計算 RVOL 百分位數（使用滾動窗口）
+        # 對於每個時間點，計算當前 RVOL 在過去 rvol_window 天內的百分位數排名
+        def calculate_percentile(series):
+            """計算序列最後一個值在整個序列中的百分位數排名。"""
+            if len(series) == 0:
+                return np.nan
+            current_val = series.iloc[-1]
+            if pd.isna(current_val):
+                return np.nan
+            # 計算當前值在窗口內的排名（百分位數）
+            # rank(pct=True) 會返回 0.0-1.0 之間的百分位數
+            # method='average' 處理相同值的情況
+            ranked = pd.Series(series).rank(pct=True, method='average', na_option='keep')
+            return ranked.iloc[-1]
+        
+        df['RVOL_Percentile'] = df['RVOL'].rolling(
+            window=rvol_window,
+            min_periods=min(10, rvol_window // 4)  # 至少需要一些資料點
+        ).apply(calculate_percentile, raw=False)
+
         return df
 
-    def _get_ritual_number(
-        self,
-        return_val: float,
-        rvol_val: float
-    ) -> int:
-        """根據報酬率和相對成交量決定儀式數字.
+    def _get_dayan_yao(self, rvol_percentile: float) -> int:
+        """根據 RVOL 百分位數決定爻（使用大衍之數機率分布）.
 
-        實作「Whale Volume Weighting」邏輯：
-        - 方向（Direction）: 由 return_val 與 YIN_YANG_THRESHOLD 比較決定
-        - 能量（Energy）: 由 rvol_val 決定是否為「Whale」級成交量
+        實作傳統「大衍之數」機率分布：
+        - 6 (老陰): 1/16 (0.0625) - 極低能量
+        - 8 (少陰): 7/16 (0.4375) - 低-中能量
+        - 7 (少陽): 5/16 (0.3125) - 中-高能量
+        - 9 (老陽): 3/16 (0.1875) - 極高能量
 
         Args:
-            return_val: 日報酬率
-            rvol_val: 相對成交量（RVOL）
+            rvol_percentile: RVOL 百分位數（0.0-1.0）
 
         Returns:
             儀式數字：6（老陰）、7（少陽）、8（少陰）、9（老陽）
 
         Note:
-            - RVOL > 2.0 被視為「Whale」級（高能量，導致變動）
-            - RVOL <= 2.0 被視為正常或弱勢（低能量，靜止狀態）
+            - 如果 rvol_percentile 為 NaN，返回 8（少陰，預設靜態狀態）
+            - 使用精確的累積機率閾值：1/16, 8/16, 13/16, 16/16
         """
-        # 判斷方向：上漲（陽）或下跌（陰）
-        is_up = return_val > settings.YIN_YANG_THRESHOLD
+        # 處理 NaN 值
+        if pd.isna(rvol_percentile):
+            return 8  # 預設為少陰（靜態狀態）
 
-        # 判斷能量：是否為 Whale 級成交量
-        is_whale = rvol_val > 2.0
+        # 大衍之數累積機率閾值
+        threshold_6 = 1 / 16  # 0.0625
+        threshold_8 = 8 / 16  # 0.5000 (1/16 + 7/16)
+        threshold_7 = 13 / 16  # 0.8125 (8/16 + 5/16)
 
-        # 映射到四象
-        if is_up and is_whale:
-            return 9  # 老陽（變動之陽）
-        elif not is_up and is_whale:
-            return 6  # 老陰（變動之陰）
-        elif is_up and not is_whale:
-            return 7  # 少陽（靜止之陽）
-        else:  # not is_up and not is_whale
-            return 8  # 少陰（靜止之陰）
+        # 根據百分位數映射到四象
+        if rvol_percentile < threshold_6:
+            return 6  # 老陰（變動之陰）- 極低能量
+        elif rvol_percentile < threshold_8:
+            return 8  # 少陰（靜止之陰）- 低-中能量
+        elif rvol_percentile < threshold_7:
+            return 7  # 少陽（靜止之陽）- 中-高能量
+        else:
+            return 9  # 老陽（變動之陽）- 極高能量
 
     def generate_hexagrams(
         self,
-        df: pd.DataFrame
+        df: pd.DataFrame,
+        rvol_window: int = 120
     ) -> pd.DataFrame:
         """生成易經六十四卦.
 
         從股票價格資料生成六爻卦象。
         使用滾動窗口（6天）構造每個卦象。
+        使用「大衍之數」機率分布，以 RVOL 百分位數決定爻。
 
         Args:
             df: 原始價格資料 DataFrame。
                 - 多檔股票：MultiIndex DataFrame（columns: [Ticker, OHLCV]）
                 - 單檔股票：標準 DataFrame（columns: OHLCV）
+            rvol_window: 用於計算 RVOL 百分位數的滾動窗口大小（預設 120 天）。
 
         Returns:
             新增了以下欄位的 DataFrame：
@@ -145,7 +172,8 @@ class MarketEncoder:
         Note:
             - 會自動丟棄 Volume_MA20 為 NaN 的列（前20天）
             - 每個 ticker 分別處理
-            - 需要至少26天資料才能生成完整卦象（20天MA + 6天窗口）
+            - 需要至少 max(26, rvol_window) 天資料才能生成完整卦象
+            - 使用大衍之數機率分布映射 RVOL 百分位數到爻
         """
         if df.empty:
             return df.copy()
@@ -160,8 +188,8 @@ class MarketEncoder:
             for ticker in df.columns.get_level_values(0).unique():
                 ticker_df = df[ticker].copy()
 
-                # 計算技術指標
-                ticker_df = self._calculate_technical_indicators(ticker_df)
+                # 計算技術指標（包含 RVOL 百分位數）
+                ticker_df = self._calculate_technical_indicators(ticker_df, rvol_window)
 
                 # 丟棄 Volume_MA20 為 NaN 的列（前20天）
                 ticker_df = ticker_df.dropna(subset=['Volume_MA20'])
@@ -169,22 +197,10 @@ class MarketEncoder:
                 if ticker_df.empty:
                     continue
 
-                # 計算儀式數字（向量化）
-                ticker_df['Ritual_Num'] = np.select(
-                    condlist=[
-                        (ticker_df['Daily_Return'] > settings.YIN_YANG_THRESHOLD) &
-                        (ticker_df['RVOL'] > 2.0),  # is_up and is_whale
-                        (ticker_df['Daily_Return'] <= settings.YIN_YANG_THRESHOLD) &
-                        (ticker_df['RVOL'] > 2.0),  # not is_up and is_whale
-                        (ticker_df['Daily_Return'] > settings.YIN_YANG_THRESHOLD) &
-                        (ticker_df['RVOL'] <= 2.0),  # is_up and not is_whale
-                    ],
-                    choicelist=[9, 6, 7],
-                    default=8  # not is_up and not is_whale
+                # 使用大衍之數方法計算儀式數字（向量化）
+                ticker_df['Ritual_Num'] = ticker_df['RVOL_Percentile'].apply(
+                    lambda x: self._get_dayan_yao(x)
                 )
-
-                # 處理 NaN 值（RVOL 為 NaN 時設為 8）
-                ticker_df['Ritual_Num'] = ticker_df['Ritual_Num'].fillna(8)
 
                 # 使用滾動窗口生成六爻序列
                 ritual_sequences = []
@@ -224,28 +240,16 @@ class MarketEncoder:
                 result = pd.DataFrame()
         else:
             # 單檔股票：直接處理
-            result = self._calculate_technical_indicators(df.copy())
+            result = self._calculate_technical_indicators(df.copy(), rvol_window)
 
             # 丟棄 Volume_MA20 為 NaN 的列
             result = result.dropna(subset=['Volume_MA20'])
 
             if not result.empty:
-                # 計算儀式數字（向量化）
-                result['Ritual_Num'] = np.select(
-                    condlist=[
-                        (result['Daily_Return'] > settings.YIN_YANG_THRESHOLD) &
-                        (result['RVOL'] > 2.0),
-                        (result['Daily_Return'] <= settings.YIN_YANG_THRESHOLD) &
-                        (result['RVOL'] > 2.0),
-                        (result['Daily_Return'] > settings.YIN_YANG_THRESHOLD) &
-                        (result['RVOL'] <= 2.0),
-                    ],
-                    choicelist=[9, 6, 7],
-                    default=8
+                # 使用大衍之數方法計算儀式數字（向量化）
+                result['Ritual_Num'] = result['RVOL_Percentile'].apply(
+                    lambda x: self._get_dayan_yao(x)
                 )
-
-                # 處理 NaN
-                result['Ritual_Num'] = result['Ritual_Num'].fillna(8)
 
                 # 生成六爻序列
                 ritual_sequences = []
