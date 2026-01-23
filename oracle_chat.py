@@ -5,7 +5,7 @@
 """
 
 import os
-from typing import Optional
+from typing import List, Optional, Tuple
 
 import google.generativeai as genai
 from dotenv import load_dotenv
@@ -168,35 +168,132 @@ class Oracle:
             'binary_code': binary_code
         }
 
-    def _get_iching_wisdom(
-        self,
-        hexagram_name: str,
-        user_question: str
-    ) -> str:
-        """從向量資料庫檢索易經智慧.
+    def _get_future_hexagram_name(self, ritual_sequence: List[int]) -> str:
+        """取得之卦（變爻後）的卦名.
 
-        使用語義搜尋找出與卦象和問題相關的易經文本。
+        依傳統規則：6→7（老陰→少陽）、9→8（老陽→少陰），
+        再以奇=1、偶=0 轉二進位，查 HEXAGRAM_MAP 得之卦名。
 
         Args:
-            hexagram_name: 卦象英文名稱（例如 "The Well"）
-            user_question: 用戶問題
+            ritual_sequence: 儀式數字序列，例如 [8, 7, 9, 6, 8, 8]
 
         Returns:
-            檢索到的易經文本內容（如果找不到則返回空字串）
+            之卦的卦名字串（例如 "Ji Ji (After Completion)"）
         """
-        # 構造查詢文字
-        # 結合卦象名稱和用戶問題，提高檢索相關性
-        query_text = f"{hexagram_name} meaning {user_question}"
+        # 6→7, 9→8；7、8 不變
+        transformed = [
+            7 if n == 6 else (8 if n == 9 else n)
+            for n in ritual_sequence
+        ]
+        # 奇=1（陽），偶=0（陰）
+        binary = "".join("1" if n % 2 == 1 else "0" for n in transformed)
+        info = self.core.get_hexagram_name(binary)
+        name_full = info.get("name", "Unknown")
+        return name_full
 
-        # 查詢向量資料庫（返回最相關的 3 個結果）
+    def _resolve_strategy(
+        self, current_hex_name: str, ritual_sequence: List[int]
+    ) -> Tuple[str, List[str], str]:
+        """依動爻數量決定之卦策略：情境、查詢列表、之卦名.
+
+        動爻為 6 或 9。回傳 (strategy_context, search_queries, future_hex_name)。
+        """
+        # 從 ritual_sequence 推算本卦與動爻
+        current_binary = "".join(
+            "1" if n in (9, 7) else "0" for n in ritual_sequence
+        )
+        current_hex = self.core.get_hexagram_name(current_binary)
+        current_hex_id = current_hex.get("id", 0)
+        current_nature = current_hex.get("nature", "?")
+
+        moving = [i + 1 for i, n in enumerate(ritual_sequence) if n in (6, 9)]
+        count = len(moving)
+        future_hex_name = self._get_future_hexagram_name(ritual_sequence)
+
+        # 查詢用：本卦 Judgement/Image（知識庫為 Judgement）
+        q_main = f"Hexagram {current_hex_id} Judgement Image"
+        q_future = f"{future_hex_name} Judgement"
+
+        if count == 0:
+            # 0 動爻：全盤接受，市場穩定
+            ctx = "Total Acceptance. 市場穩定，以本卦卦辭／象辭為主。"
+            return (ctx, [q_main], future_hex_name)
+
+        if count == 1:
+            # 1 動爻：焦點在單一動爻
+            line = moving[0]
+            ctx = "Specific Focus. 注意單一動爻所指的層級或事件。"
+            return (ctx, [f"Hexagram {current_hex_id} Line {line}"], future_hex_name)
+
+        if count == 2:
+            # 2 動爻：主客對照，下爻貞（進場/支撐），上爻悔（出場/阻力）
+            lo, hi = sorted(moving)[0], sorted(moving)[1]
+            ctx = (
+                "Primary vs Secondary. 下爻為貞（進場／支撐），"
+                "上爻為悔（出場／阻力），需兼看兩爻。"
+            )
+            return (
+                ctx,
+                [f"Hexagram {current_hex_id} Line {lo}", f"Hexagram {current_hex_id} Line {hi}"],
+                future_hex_name,
+            )
+
+        if count == 3:
+            # 3 動爻：對沖時刻，本卦貞（持有），之卦悔（風險）
+            ctx = (
+                "Hedging Moment. 本卦為貞（持有），之卦為悔（風險），"
+                "需權衡本卦卦辭與之卦卦辭。"
+            )
+            return (ctx, [q_main, q_future], future_hex_name)
+
+        if count in (4, 5):
+            # 4 或 5 動爻：趨勢反轉，之卦貞（主趨勢），本卦悔（歷史）
+            ctx = (
+                "Trend Reversal. 之卦為貞（主趨勢），本卦為悔（歷史），"
+                "以之卦卦辭為主、本卦卦辭為輔。"
+            )
+            return (ctx, [q_future, q_main], future_hex_name)
+
+        # 6 動爻：極端反轉
+        if current_nature == "乾":
+            ctx = "Extreme Reversal. 乾卦六爻全變，用「用九」為準。"
+            return (ctx, ["Qian Use Nine", "Use Nine"], future_hex_name)
+        if current_nature == "坤":
+            ctx = "Extreme Reversal. 坤卦六爻全變，用「用六」為準。"
+            return (ctx, ["Kun Use Six", "Use Six"], future_hex_name)
+        ctx = "Extreme Reversal. 六爻全變，以之卦卦辭為準。"
+        return (ctx, [q_future], future_hex_name)
+
+    def _get_iching_wisdom(
+        self,
+        search_queries: List[str],
+        user_question: str
+    ) -> str:
+        """從向量資料庫依查詢列表檢索易經智慧.
+
+        依之卦策略產生的 search_queries 逐筆語義搜尋，合併結果。
+
+        Args:
+            search_queries: 查詢字串列表（如 "Hexagram 1 Judgement"、"Hexagram 3 Line 2"）
+            user_question: 用戶問題（可選用於提高相關性）
+
+        Returns:
+            合併後的易經文本；若無結果則回傳空字串。
+        """
+        if not search_queries:
+            return ""
+        seen: set = set()
+        parts: List[str] = []
         try:
-            results = self.vector_store.query(query_text, n_results=3)
-            if results:
-                # 合併所有檢索結果
-                context = "\n\n".join(results)
-                return context
-            else:
-                return ""
+            for q in search_queries:
+                # 可選：將 user_question 併入以提高相關性
+                text = f"{q} {user_question}" if user_question else q
+                results = self.vector_store.query(text, n_results=3)
+                for r in results or []:
+                    if r and r not in seen:
+                        seen.add(r)
+                        parts.append(r)
+            return "\n\n".join(parts) if parts else ""
         except Exception as e:
             print(f"向量資料庫查詢錯誤: {e}")
             return ""
@@ -219,49 +316,62 @@ class Oracle:
             Exception: 如果 Gemini API 調用失敗
         """
         try:
-            # 步驟 1: 獲取市場卦象
+            # 步驟 1: 獲取市場卦象（含 ritual_sequence）
             hexagram_info = self._get_market_hexagram(ticker)
             hexagram_name = hexagram_info['hexagram_name']
             chinese_name = hexagram_info['chinese_name']
             hexagram_id = hexagram_info['hexagram_id']
+            ritual_sequence = hexagram_info['ritual_sequence']
 
-            # 步驟 2: 檢索易經智慧
-            retrieved_context = self._get_iching_wisdom(hexagram_name, question)
+            # 步驟 2: 依之卦法解析策略（情境、查詢列表、之卦名）
+            strategy_context, search_queries, future_hex_name = self._resolve_strategy(
+                hexagram_name, ritual_sequence
+            )
 
-            # 步驟 3: 構造系統提示
+            # 步驟 3: 依查詢列表檢索易經智慧（不再只查本卦名）
+            retrieved_context = self._get_iching_wisdom(search_queries, question)
+
+            # 步驟 4: 構造系統提示（注入策略情境與貞／悔框架）
             system_prompt = f"""You are a sophisticated AI Financial Advisor named 'Quantum I-Ching'.
-Your goal is to interpret ancient I-Ching hexagrams into **actionable modern stock market insights**.
+Your goal is to interpret ancient I-Ching hexagrams into **actionable modern stock market insights** using the traditional **Zhi Gua (之卦)** method and the **Zhen (貞) / Hui (悔)** framework.
+
+**Zhen (貞) vs Hui (悔) — 必須遵守的解釋框架：**
+* **貞 (Zhen)**: 主體、支撐、長期、進場、持有。在操作上對應：趨勢支撐、主要方向、可倚賴的層級。
+* **悔 (Hui)**: 客體、阻力、短期、出場、風險。在操作上對應：風險管理、壓力位、需警惕的層級。
+請依當前之卦策略，在「投資快訊」「現代解讀」「操作建議」中，明確標示哪些建議屬貞（主／支撐／長期）、哪些屬悔（客／阻力／短期），例如：貞—持有、逢回加碼；悔—遇壓減碼、嚴格止損。
+
+**之卦策略 (Zhi Gua Strategy):**
+{strategy_context}
 
 **Context:**
 * Stock: {ticker}
-* Hexagram: {hexagram_name} ({chinese_name}, ID: {hexagram_id})
-* I-Ching Text: {retrieved_context if retrieved_context else "No specific scripture found, use general I-Ching principles"}
+* 本卦 (Current Hexagram): {hexagram_name} ({chinese_name}, ID: {hexagram_id})
+* 之卦 (Future Hexagram): {future_hex_name}
+* I-Ching Text (依策略檢索): {retrieved_context if retrieved_context else "No specific scripture found, use general I-Ching principles"}
 * User Question: {question}
 
 **Response Guidelines:**
 1. **Tone**: Professional, crisp, and modern. Like a Bloomberg analyst who happens to be an I-Ching scholar. Avoid overly flowery or archaic language (do NOT use '吾', '汝', '此乃'). Use standard modern Traditional Chinese (繁體中文).
 
 2. **Structure** (Use Markdown headers and bullet points):
-    * **🚀 投資快訊 (Executive Summary)**: A 1-sentence bottom line (e.g., "短期整理，長期看多" or "建議等待更好的進場時機").
-    * **📜 易經原文 (The Source)**: Quote the most relevant 1-2 sentences from the provided I-Ching Text (Judgement or Image). If no specific text is provided, use general I-Ching principles related to this hexagram.
-    * **💡 現代解讀 (Modern Decoding)**: Translate the metaphor into financial terms.
-        * *Example:* If 'The Well' (井) -> Mention 'Infrastructure', 'Deep Value', 'Dividends', or 'Accumulation'.
-        * *Example:* If 'The Creative' (乾) -> Mention 'High Momentum', 'Breakout', or 'Overbought'.
-        * *Example:* If 'Waiting' (需) -> Mention 'Consolidation', 'Patience', or 'Wait for Catalyst'.
-    * **📈 操作建議 (Action Plan)**: Give concrete advice based on the hexagram (e.g., '建議設定止損於 X', '採用定期定額策略', '等待成交量放大').
+    * **🚀 投資快訊 (Executive Summary)**: A 1-sentence bottom line. Where applicable, state which aspect is 貞 (main/support) and which is 悔 (risk/resistance).
+    * **📜 易經原文 (The Source)**: Quote the most relevant 1-2 sentences from the provided I-Ching Text. If none, use general I-Ching principles.
+    * **💡 現代解讀 (Modern Decoding)**: Translate the metaphor into financial terms. Map 貞 to trend/support and 悔 to risk/exit levels when the strategy involves both.
+    * **📈 操作建議 (Action Plan)**: Give concrete advice. Use 貞 for entries, hold zones, and support; use 悔 for exits, stop-loss, and resistance. Example: 「貞：XX 以下視為支撐，可持有」；「悔：YY 以上注意風險，考慮減碼」.
 
 **Strict Output Format**: 
 - Use Markdown headers (##) for each section
 - Use bullet points for details
 - Keep the tone professional and modern
 - All output must be in Traditional Chinese (繁體中文)
-- Do NOT use ancient Chinese style or archaic expressions"""
+- Do NOT use ancient Chinese style or archaic expressions
+- Always apply the Zhen/Hui framework when the strategy indicates Primary vs Secondary, Hedging, Trend Reversal, or Extreme Reversal."""
 
-            # 步驟 4: 生成回答
+            # 步驟 5: 生成回答
             try:
                 response = self.model.generate_content(system_prompt)
-                
-                # 步驟 5: 提取文字回應
+
+                # 步驟 6: 提取文字回應
                 if response and hasattr(response, 'text'):
                     return response.text
                 else:

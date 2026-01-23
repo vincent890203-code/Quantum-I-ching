@@ -2633,3 +2633,96 @@ train_loader, test_loader = processor.split_data(X_num, X_hex, y)
 
 ---
 
+## 2025-01-23 | 之卦 (Zhi Gua) 傳統解法與貞／悔架構
+
+### 步驟：Oracle 之卦策略與動爻邏輯
+
+**日期**: 2025-01-23  
+**狀態**: ✅ 完成
+
+#### 設計目標
+
+在 `oracle_chat.py` 的 `Oracle` 中實作傳統「之卦」解法：依動爻（6、9）數量選擇不同解釋策略，並引入 **貞 (Zhen) / 悔 (Hui)** 架構，供 Gemini 產出具主客、支撐／阻力、進出場意涵的金融建議。
+
+#### 實作細節
+
+1. **`_get_future_hexagram_name(ritual_sequence)`**
+   - 輸入：`ritual_sequence`（`List[int]`，如 `[8,7,9,6,8,8]`）。
+   - 規則：6→7（老陰→少陽）、9→8（老陽→少陰），再以奇=1、偶=0 轉二進位，以 `IChingCore.get_hexagram_name`（底層 `HEXAGRAM_MAP`）查之卦名。
+   - 輸出：之卦卦名（字串）。
+
+2. **`_resolve_strategy(current_hex_name, ritual_sequence)`**
+   - 統計動爻數量（值為 6 或 9）。
+   - 依數量回傳 `(strategy_context, search_queries, future_hex_name)`：
+     * **0 動爻**：Total Acceptance，查本卦 Judgement / Image。
+     * **1 動爻**：Specific Focus，僅查該動爻（如 `Hexagram X Line Y`）。
+     * **2 動爻**：Primary vs Secondary，下爻貞（進場／支撐）、上爻悔（出場／阻力），查兩爻。
+     * **3 動爻**：Hedging Moment，本卦貞（持有）、之卦悔（風險），查本卦＋之卦 Judgement。
+     * **4 或 5 動爻**：Trend Reversal，之卦貞（主趨勢）、本卦悔（歷史），查之卦＋本卦 Judgement。
+     * **6 動爻**：Extreme Reversal；若本卦為乾用「Use Nine」、坤用「Use Six」，否則用之卦 Judgement。
+
+3. **`_get_iching_wisdom(search_queries, user_question)` 重構**
+   - 改為接受 `List[str]` 的 `search_queries`，依策略產生的查詢逐筆向向量庫檢索，合併並去重後回傳。
+
+4. **`ask(ticker, question)` 更新**
+   - 從 `_get_market_hexagram` 取得 `ritual_sequence`。
+   - 呼叫 `_resolve_strategy` 取得情境、查詢列表、之卦名。
+   - 以 `search_queries` 呼叫 `_get_iching_wisdom`（不再僅用本卦名）。
+   - 系統提示中注入：之卦策略情境、**貞 (Zhen) = 主／支撐／長期／進場／持有**、**悔 (Hui) = 客／阻力／短期／出場／風險**，並要求 Gemini 在投資快訊、現代解讀、操作建議中依貞／悔給出結構化建議（例如貞—支撐與持有；悔—止損與減碼）。
+
+#### 邏輯重點
+
+- **貞 (Zhen) vs 悔 (Hui)**：用於動爻 2、3、4、5、6 等需主客或趨勢／風險對照的情境，在提示中明確定義，並要求模型在操作建議中對應到支撐、趨勢、進場（貞）與阻力、風險、出場（悔）。
+
+---
+
+## 2025-01-23 | 易經知識庫：open-iching 來源與簡體轉繁體
+
+### 步驟：資料來源切換、簡繁轉換、向量庫重建
+
+**日期**: 2025-01-23  
+**狀態**: ✅ 完成
+
+#### 設計目標
+
+1. 將易經資料來源由失效的 `kwanlin/iching-json` 改為 [john-walks-slow/open-iching](https://github.com/john-walks-slow/open-iching)，取得可用的 64 卦與六爻結構化資料。  
+2. 把 `data/iching_complete.json` 內簡體中文轉成繁體，並同步重建 ChromaDB 向量庫。
+
+#### 實作細節
+
+1. **`setup_iching_db.py` 改用 open-iching**
+   - **iching**：`https://cdn.jsdelivr.net/gh/john-walks-slow/open-iching@main/iching/iching.json`
+   - **象傳（可選）**：`ichuan/xiang.json`，若取得則填入大象／小象，否則為空。
+   - **驗證**：總數 64、第 1 卦為「乾」、`lines` 非空且含 `scripture` 或 `name`。
+   - **轉換**：將 open-iching 格式（`id`, `name`, `scripture`, `lines` 之 `id`/`name`/`scripture`）對應為統一格式：`number`, `name`, `judgment`, `image`, `lines[{position, meaning, xiang}]`，爻辭為 `{name}：{scripture}`（如「初九：潛龍，勿用。」）。
+   - **輸出**：`data/iching_complete.json`（utf-8）。成功時印出：`[OK] Verified I-Ching Data (64 Hexagrams + Lines) saved.`
+
+2. **新增 `convert_iching_s2t.py`**
+   - 使用 **OpenCC**（`s2tw`）將 `data/iching_complete.json` 中字串由簡體轉為臺灣繁體。
+   - 轉換欄位：`name`, `judgment`, `image`，以及各爻之 `meaning`, `xiang`。
+   - 若未安裝 `opencc-python-reimplemented`，腳本會先 `pip install` 再執行。
+   - 轉完後呼叫 `IChingKnowledgeLoader().build_vector_db()` 重建 ChromaDB。
+   - 執行：`python convert_iching_s2t.py`。
+
+3. **`knowledge_loader.py`**
+   - 註解更新：說明 `iching_complete.json` 來自 `setup_iching_db` 自 john-walks-slow/open-iching 下載並轉成之統一格式。
+   - 建庫成功時改印 `[OK] Knowledge Base Rebuilt: X documents indexed.`，避免 Windows 終端 cp950 下 `UnicodeEncodeError`（如 ✅）。
+
+#### 簡繁轉換範例
+
+| 簡體 | 繁體 |
+|------|------|
+| 元亨利贞。 | 元亨利貞。 |
+| 潜龙，勿用。 | 潛龍，勿用。 |
+| 见龙再田，利见大人 | 見龍再田，利見大人 |
+| 飞龙在天 | 飛龍在天 |
+| 龙战于野，其血玄黄 | 龍戰於野，其血玄黃 |
+| 利牝马之贞 | 利牝馬之貞 |
+
+#### 執行結果
+
+- `python setup_iching_db.py`：下載、驗證、轉換、寫入成功。
+- `python convert_iching_s2t.py`：簡轉繁完成，ChromaDB 重建 **450** 份文件（64 主卦 ＋ 386 爻，含乾卦「用九」、坤卦「用六」）。
+
+---
+

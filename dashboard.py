@@ -162,7 +162,7 @@ st.markdown(_CUSTOM_CSS, unsafe_allow_html=True)
 
 
 # ===== Oracle 初始化（資源快取） =====
-@st.cache_resource
+@st.cache_resource(show_spinner="正在加載中")
 def get_oracle() -> Oracle:
     """以資源快取方式初始化 Oracle，避免重複載入模型與向量資料庫."""
     return Oracle()
