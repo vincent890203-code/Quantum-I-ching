@@ -85,13 +85,14 @@ class Oracle:
                 "嘗試的模型: " + ", ".join(model_names)
             )
 
-    def _get_market_hexagram(self, ticker: str) -> dict:
+    def _get_market_hexagram(self, ticker: str, market_type: Optional[str] = None) -> dict:
         """獲取市場卦象.
 
         從股票資料中提取最新的易經卦象資訊。
 
         Args:
             ticker: 股票代號（例如 "NVDA"）
+            market_type: 市場類型（'US', 'TW', 'CRYPTO'），若為 None 則使用 settings.MARKET_TYPE
 
         Returns:
             包含卦象資訊的字典：
@@ -105,7 +106,7 @@ class Oracle:
             ValueError: 如果無法獲取或處理資料
         """
         # 步驟 1: 載入市場資料
-        raw_data = self.data_loader.fetch_data(tickers=[ticker])
+        raw_data = self.data_loader.fetch_data(tickers=[ticker], market_type=market_type)
         if raw_data.empty:
             raise ValueError(f"無法獲取 {ticker} 的市場資料")
 
@@ -209,10 +210,20 @@ class Oracle:
         moving = [i + 1 for i, n in enumerate(ritual_sequence) if n in (6, 9)]
         count = len(moving)
         future_hex_name = self._get_future_hexagram_name(ritual_sequence)
+        
+        # 取得之卦的中文名稱（用於查詢）
+        future_binary = "".join(
+            "1" if (7 if n == 6 else (8 if n == 9 else n)) % 2 == 1 else "0"
+            for n in ritual_sequence
+        )
+        future_hex = self.core.get_hexagram_name(future_binary)
+        future_nature = future_hex.get("nature", "?")
 
-        # 查詢用：本卦 Judgement/Image（知識庫為 Judgement）
-        q_main = f"Hexagram {current_hex_id} Judgement Image"
-        q_future = f"{future_hex_name} Judgement"
+        # 查詢用：使用中文關鍵詞匹配實際文件格式
+        # 文件格式：主卦 = "【{number}. {name}卦】\n卦辭：{judgment}\n象曰：{image}"
+        #           爻 = "【{name}卦】 {meaning}\n象曰：{xiang}"
+        q_main = f"{current_nature}卦 卦辭 象曰"  # 匹配主卦文件
+        q_future = f"{future_nature}卦 卦辭 象曰"  # 匹配之卦主卦文件
 
         if count == 0:
             # 0 動爻：全盤接受，市場穩定
@@ -222,19 +233,26 @@ class Oracle:
         if count == 1:
             # 1 動爻：焦點在單一動爻
             line = moving[0]
+            # 轉換爻位為中文（1=初, 2=二, 3=三, 4=四, 5=五, 6=上）
+            line_names = ["初", "二", "三", "四", "五", "上"]
+            line_name = line_names[line - 1] if 1 <= line <= 6 else str(line)
             ctx = "Specific Focus. 注意單一動爻所指的層級或事件。"
-            return (ctx, [f"Hexagram {current_hex_id} Line {line}"], future_hex_name)
+            return (ctx, [f"{current_nature}卦 {line_name}爻"], future_hex_name)
 
         if count == 2:
             # 2 動爻：主客對照，下爻貞（進場/支撐），上爻悔（出場/阻力）
             lo, hi = sorted(moving)[0], sorted(moving)[1]
+            # 轉換爻位為中文
+            line_names = ["初", "二", "三", "四", "五", "上"]
+            lo_name = line_names[lo - 1] if 1 <= lo <= 6 else str(lo)
+            hi_name = line_names[hi - 1] if 1 <= hi <= 6 else str(hi)
             ctx = (
                 "Primary vs Secondary. 下爻為貞（進場／支撐），"
                 "上爻為悔（出場／阻力），需兼看兩爻。"
             )
             return (
                 ctx,
-                [f"Hexagram {current_hex_id} Line {lo}", f"Hexagram {current_hex_id} Line {hi}"],
+                [f"{current_nature}卦 {lo_name}爻", f"{current_nature}卦 {hi_name}爻"],
                 future_hex_name,
             )
 
@@ -257,10 +275,10 @@ class Oracle:
         # 6 動爻：極端反轉
         if current_nature == "乾":
             ctx = "Extreme Reversal. 乾卦六爻全變，用「用九」為準。"
-            return (ctx, ["Qian Use Nine", "Use Nine"], future_hex_name)
+            return (ctx, ["乾卦 用九", "用九"], future_hex_name)
         if current_nature == "坤":
             ctx = "Extreme Reversal. 坤卦六爻全變，用「用六」為準。"
-            return (ctx, ["Kun Use Six", "Use Six"], future_hex_name)
+            return (ctx, ["坤卦 用六", "用六"], future_hex_name)
         ctx = "Extreme Reversal. 六爻全變，以之卦卦辭為準。"
         return (ctx, [q_future], future_hex_name)
 
@@ -274,7 +292,7 @@ class Oracle:
         依之卦策略產生的 search_queries 逐筆語義搜尋，合併結果。
 
         Args:
-            search_queries: 查詢字串列表（如 "Hexagram 1 Judgement"、"Hexagram 3 Line 2"）
+            search_queries: 查詢字串列表（如 "乾卦 卦辭 象曰"、"乾卦 初爻"）
             user_question: 用戶問題（可選用於提高相關性）
 
         Returns:
@@ -286,9 +304,8 @@ class Oracle:
         parts: List[str] = []
         try:
             for q in search_queries:
-                # 可選：將 user_question 併入以提高相關性
-                text = f"{q} {user_question}" if user_question else q
-                results = self.vector_store.query(text, n_results=3)
+                # 使用純查詢字串（不加入 user_question，避免干擾語義匹配）
+                results = self.vector_store.query(q, n_results=2)  # 減少結果數量，提高精確度
                 for r in results or []:
                     if r and r not in seen:
                         seen.add(r)
@@ -298,7 +315,13 @@ class Oracle:
             print(f"向量資料庫查詢錯誤: {e}")
             return ""
 
-    def ask(self, ticker: str, question: str) -> str:
+    def ask(
+        self,
+        ticker: str,
+        question: str,
+        market_type: Optional[str] = None,
+        hexagram_info: Optional[dict] = None
+    ) -> str:
         """詢問神諭.
 
         整合市場資料分析、易經卦象解讀和知識庫檢索，
@@ -307,6 +330,9 @@ class Oracle:
         Args:
             ticker: 股票代號（例如 "NVDA"）
             question: 用戶問題（例如 "Should I buy now?"）
+            market_type: 市場類型（'US', 'TW', 'CRYPTO'），若為 None 則使用 settings.MARKET_TYPE
+            hexagram_info: 可選的已計算卦象資訊（包含 hexagram_name, chinese_name, hexagram_id, ritual_sequence），
+                           若提供則跳過重新計算，確保與上方顯示的卦象一致
 
         Returns:
             Gemini 生成的回答文字
@@ -317,11 +343,28 @@ class Oracle:
         """
         try:
             # 步驟 1: 獲取市場卦象（含 ritual_sequence）
-            hexagram_info = self._get_market_hexagram(ticker)
-            hexagram_name = hexagram_info['hexagram_name']
-            chinese_name = hexagram_info['chinese_name']
-            hexagram_id = hexagram_info['hexagram_id']
-            ritual_sequence = hexagram_info['ritual_sequence']
+            # 如果已提供 hexagram_info，直接使用；否則重新計算
+            if hexagram_info is not None:
+                hexagram_name_full = hexagram_info.get('hexagram_name', 'Unknown')
+                chinese_name = hexagram_info.get('chinese_name', '?')
+                hexagram_id = hexagram_info.get('hexagram_id', 0)
+                ritual_sequence = hexagram_info.get('ritual_sequence', [])
+                # 確保 ritual_sequence 是列表格式
+                if isinstance(ritual_sequence, str):
+                    ritual_sequence = [int(ch) for ch in str(ritual_sequence)]
+                elif not isinstance(ritual_sequence, list):
+                    ritual_sequence = list(ritual_sequence) if ritual_sequence else []
+                # 處理 hexagram_name（移除括號，與 _get_market_hexagram 一致）
+                if "(" in hexagram_name_full:
+                    hexagram_name = hexagram_name_full.split("(", 1)[0].strip()
+                else:
+                    hexagram_name = hexagram_name_full
+            else:
+                hexagram_info = self._get_market_hexagram(ticker, market_type=market_type)
+                hexagram_name = hexagram_info['hexagram_name']
+                chinese_name = hexagram_info['chinese_name']
+                hexagram_id = hexagram_info['hexagram_id']
+                ritual_sequence = hexagram_info['ritual_sequence']
 
             # 步驟 2: 依之卦法解析策略（情境、查詢列表、之卦名）
             strategy_context, search_queries, future_hex_name = self._resolve_strategy(

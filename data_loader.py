@@ -35,16 +35,18 @@ class MarketDataLoader:
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
 
-    def _format_ticker(self, ticker: str) -> str:
+    def _format_ticker(self, ticker: str, market_type: Optional[str] = None) -> str:
         """根據市場類型格式化 ticker.
 
         Args:
             ticker: 原始股票代號字串。
+            market_type: 市場類型（'US', 'TW', 'CRYPTO'），若為 None 則使用 settings.MARKET_TYPE。
 
         Returns:
-            已根據 MARKET_TYPE 調整後的 ticker 字串。
+            已根據市場類型調整後的 ticker 字串。
         """
-        market_type = settings.MARKET_TYPE
+        if market_type is None:
+            market_type = settings.MARKET_TYPE
 
         if market_type == "TW":
             # 台股：確保有 .TW 後綴
@@ -60,7 +62,8 @@ class MarketDataLoader:
 
     def fetch_data(
         self,
-        tickers: Optional[list[str]] = None
+        tickers: Optional[list[str]] = None,
+        market_type: Optional[str] = None
     ) -> pd.DataFrame:
         """獲取歷史股票價格資料.
 
@@ -69,6 +72,7 @@ class MarketDataLoader:
 
         Args:
             tickers: 股票代號清單。如果為 None，則使用 config.settings.TARGET_TICKERS。
+            market_type: 市場類型（'US', 'TW', 'CRYPTO'），若為 None 則使用 settings.MARKET_TYPE。
 
         Returns:
             包含歷史價格資料的 pandas DataFrame。
@@ -87,9 +91,12 @@ class MarketDataLoader:
             return pd.DataFrame()
 
         # 根據市場類型調整 ticker 格式
+        if market_type is None:
+            market_type = settings.MARKET_TYPE
+
         processed_tickers = []
         for ticker in tickers:
-            processed_ticker = self._format_ticker(ticker)
+            processed_ticker = self._format_ticker(ticker, market_type=market_type)
             processed_tickers.append(processed_ticker)
             if processed_ticker != ticker:
                 self.logger.debug(
@@ -99,7 +106,7 @@ class MarketDataLoader:
         self.logger.info(
             f"開始下載股票資料: {processed_tickers}, "
             f"日期範圍: {settings.START_DATE} 至 {settings.END_DATE}, "
-            f"市場類型: {settings.MARKET_TYPE}"
+            f"市場類型: {market_type}"
         )
 
         try:

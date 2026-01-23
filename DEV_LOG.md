@@ -2726,3 +2726,161 @@ train_loader, test_loader = processor.split_data(X_num, X_hex, y)
 
 ---
 
+## 2025-01-23 | Dashboard 市場類型選擇器與 US/CRYPTO 資料讀取修正
+
+### 步驟：Dashboard 市場類型切換與 fetch_data market_type 參數
+
+**日期**: 2025-01-23  
+**狀態**: ✅ 完成
+
+#### 問題描述
+
+1. **Dashboard 缺少市場類型選擇**：使用者無法在介面上切換 TW/US/CRYPTO，需修改 `config.py`。
+2. **US/CRYPTO 市場無法讀取資料**：當 `settings.MARKET_TYPE` 為 "TW"（預設）時，`fetch_data` 內部會用 TW 邏輯格式化所有 ticker，導致 US 股票（如 "NVDA"）被錯誤處理。
+
+#### 問題根源
+
+- `MarketDataLoader.fetch_data()` 內部使用 `settings.MARKET_TYPE` 來格式化 ticker。
+- Dashboard 已根據使用者選擇格式化 ticker（如 "NVDA"），但 `fetch_data` 會再次使用 `settings.MARKET_TYPE`（可能為 "TW"）處理，造成不一致。
+- 當 `settings.MARKET_TYPE="TW"` 時，`_format_ticker("NVDA")` 不會改變（US 邏輯直接返回），但日誌與邏輯可能混淆。
+
+#### 修正方案
+
+1. **`data_loader.py`**
+   - `fetch_data()` 新增可選參數 `market_type: Optional[str] = None`。
+   - 若未提供，使用 `settings.MARKET_TYPE`（向後相容）。
+   - 將 `market_type` 傳給 `_format_ticker()`，確保格式化邏輯一致。
+   - 日誌訊息改為顯示實際使用的 `market_type`。
+
+2. **`dashboard.py`**
+   - 側邊欄新增 `st.selectbox` 市場類型選擇器（TW / US / CRYPTO），預設 TW。
+   - 根據使用者選擇的市場類型動態格式化 ticker：
+     * TW：純數字補 `.TW`（如 `2330` → `2330.TW`）
+     * US：直接使用（如 `NVDA`）
+     * CRYPTO：補 `-USD`（如 `BTC` → `BTC-USD`）
+   - 預設 ticker 依市場類型自動調整（TW→2330, US→NVDA, CRYPTO→BTC）。
+   - 呼叫 `fetch_data()` 時傳入 `market_type=market_type` 參數。
+   - 更新說明文字，反映支援三種市場類型。
+
+#### 測試結果
+
+- ✅ US 市場：`fetch_data(tickers=['NVDA'], market_type='US')` → 成功下載 1522 筆資料。
+- ✅ CRYPTO 市場：`fetch_data(tickers=['BTC'], market_type='CRYPTO')` → 成功下載 2213 筆資料（自動轉為 `BTC-USD`）。
+- ✅ Dashboard 介面：使用者可切換市場類型，ticker 自動格式化，資料讀取正常。
+
+#### 向後相容性
+
+- `fetch_data()` 的 `market_type` 參數為可選，未提供時使用 `settings.MARKET_TYPE`。
+- 現有 CLI 工具（`oracle_chat.py`, `model_lstm.py`, `backtester.py`, `main.py`）無需修改，仍使用 `settings.MARKET_TYPE`。
+
+#### 後續修正：oracle.ask() 也需要 market_type
+
+**問題**：Dashboard 中呼叫 `oracle.ask()` 時，`ask()` 內部會再次呼叫 `_get_market_hexagram()`，而該方法會呼叫 `fetch_data()` 但未傳入 `market_type`，導致使用 `settings.MARKET_TYPE`（預設 "TW"），US/CRYPTO 市場無法正確讀取。
+
+**修正**：
+- `Oracle._get_market_hexagram()` 新增 `market_type: Optional[str] = None` 參數。
+- `Oracle.ask()` 新增 `market_type: Optional[str] = None` 參數，並傳給 `_get_market_hexagram()`。
+- `dashboard.py` 呼叫 `oracle.ask()` 時傳入 `market_type=market_type`。
+
+**測試**：`_get_market_hexagram('NVDA', market_type='US')` → 成功取得卦象（夬 / Guai）。
+
+#### 後續修正：卦象一致性確保
+
+**問題**：Dashboard 中上方顯示的卦象與下方 `oracle.ask()` 解讀可能不一致，因為：
+1. 上方：從 `raw_df` → `encoded_df` → `ritual_sequence` → `interpret_sequence()` 計算卦象。
+2. 下方：`oracle.ask()` → `_get_market_hexagram()` → 再次下載資料並計算卦象。
+
+即使使用相同的 ticker 和 market_type，兩次計算可能因時間差或資料更新導致卦象不同。
+
+**修正**：
+- `Oracle.ask()` 新增 `hexagram_info: Optional[dict] = None` 參數，可接受已計算的卦象資訊（包含 `hexagram_name`, `chinese_name`, `hexagram_id`, `ritual_sequence`）。
+- 若提供 `hexagram_info`，`ask()` 跳過 `_get_market_hexagram()`，直接使用提供的資訊。
+- `dashboard.py` 中，將已計算好的卦象資訊（`hexagram_name_full`, `chinese_name`, `hexagram_id`, `ritual_sequence`）傳給 `oracle.ask()`。
+- 確保 `hexagram_name` 處理一致（移除括號），與 `_get_market_hexagram()` 邏輯相同。
+
+**效果**：
+- ✅ 上方顯示與下方解讀使用**完全相同**的卦象（同一個 `ritual_sequence`）。
+- ✅ 避免重複下載資料與計算，提升效能。
+- ✅ Terminal 測試：`ask('NVDA', 'Should I buy?', market_type='US', hexagram_info=h)` → 成功。
+
+---
+
+## 2025-01-23 | Dashboard 本卦與之卦並排顯示功能
+
+### 步驟：卦象視覺化增強 - 顯示本卦與之卦
+
+**日期**: 2025-01-23  
+**狀態**: ✅ 完成
+
+#### 設計目標
+
+當卦象中有動爻（Old Yin 6 或 Old Yang 9）時，Dashboard 應同時顯示本卦（Current Hexagram）和之卦（Future Hexagram），讓使用者清楚看到變動的方向。
+
+#### 實作細節
+
+1. **新增 CSS 樣式**
+   - `.hex-line.moving`：動爻高亮樣式，橙色邊框（`#ff9800`）與脈衝動畫效果。
+   - `.hexagram-container`：卦象容器樣式，用於並排顯示時的佈局。
+   - `.hexagram-arrow`：箭頭樣式，用於顯示本卦 → 之卦的轉換方向。
+
+2. **增強 `draw_hexagram()` 函數**
+   - 新增 `moving_lines: list[int] | None` 參數：標記動爻位置（1-based，例如 [1, 3] 表示初爻和三爻）。
+   - 新增 `show_title: bool` 參數：控制是否顯示標題和元資料（並排顯示時隱藏）。
+   - 動爻會自動添加 `moving` CSS 類別，顯示橙色邊框與脈衝動畫。
+
+3. **新增 `calculate_future_binary()` 函數**
+   - 計算之卦的二進制編碼。
+   - 規則：
+     * 6 (老陰) → 1 (陽)
+     * 9 (老陽) → 0 (陰)
+     * 7 (少陽) → 1 (陽，不變)
+     * 8 (少陰) → 0 (陰，不變)
+
+4. **更新卦象顯示邏輯（`dashboard.py`）**
+   - **無動爻**：僅顯示本卦（保持原有行為）。
+   - **有動爻**：並排顯示本卦 → 之卦：
+     * 使用 `st.columns([1, 0.2, 1])` 三欄佈局。
+     * 左欄：本卦（顯示動爻高亮）。
+     * 中欄：➡️ 箭頭指示變動方向。
+     * 右欄：之卦（顯示變動後的卦象）。
+     * 底部：動爻說明（例如「動爻：初爻、三爻 (2 個)」）。
+
+5. **之卦名稱獲取**
+   - 使用 `oracle.core.get_hexagram_name(future_binary)` 取得之卦的中文名稱和英文名稱。
+   - 處理名稱格式（移除括號）與本卦一致。
+
+#### 視覺效果
+
+- **無動爻**：單一卦象顯示（與之前相同）。
+- **有動爻**：
+  - 左側：本卦（動爻有橙色高亮與脈衝動畫）。
+  - 中間：➡️ 箭頭（垂直置中）。
+  - 右側：之卦（變動後的結果）。
+  - 底部：動爻說明文字。
+
+#### 技術決策
+
+- **為什麼動爻使用橙色高亮？**
+  - 橙色（`#ff9800`）在淺色主題中清晰可見，且與金融警示色調一致。
+  - 脈衝動畫（`pulse-moving`）能吸引使用者注意變動的爻位。
+
+- **為什麼使用三欄佈局？**
+  - `[1, 0.2, 1]` 比例確保本卦和之卦等寬，箭頭欄位較窄，整體平衡。
+  - 箭頭垂直置中，視覺上連接兩個卦象。
+
+- **為什麼之卦不顯示動爻標記？**
+  - 之卦是變動後的結果，動爻標記僅用於本卦，標示哪些爻位正在變動。
+
+#### 測試結果
+
+- ✅ 無動爻：單一卦象顯示正常。
+- ✅ 有動爻：本卦與之卦並排顯示，動爻高亮正常。
+- ✅ 動爻說明：正確顯示動爻位置（如「動爻：初爻、三爻 (2 個)」）。
+- ✅ 之卦名稱：正確取得並顯示中文和英文名稱。
+
+#### 向後相容性
+
+- 無動爻時保持原有顯示方式，不影響現有功能。
+- 所有 CSS 樣式與現有淺色主題一致。
+
+---
