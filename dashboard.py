@@ -13,6 +13,31 @@ import yfinance as yf
 from oracle_chat import Oracle
 
 
+# 常用台股公司名稱對應表（可依需求擴充）
+TW_COMPANY_NAME_TO_TICKER: dict[str, str] = {
+    "台積電": "2330",
+    "臺積電": "2330",
+    "台灣積體電路": "2330",
+    "台灣積體電路製造": "2330",
+    "鴻海": "2317",
+    "鴻海精密": "2317",
+    "鴻海精密工業": "2317",
+    "聯發科": "2454",
+    "聯發科技": "2454",
+    "中鋼": "2002",
+    "台達電": "2308",
+}
+
+
+def _normalize_tw_name(name: str) -> str:
+    """簡單正規化台股公司名稱，去除空白與常見尾詞."""
+    s = name.strip()
+    for suffix in ["股份有限公司", "公司", "股份有限"]:
+        if s.endswith(suffix):
+            s = s[: -len(suffix)]
+    return s.replace(" ", "")
+
+
 # ===== Streamlit 基本設定 =====
 st.set_page_config(
     layout="wide",
@@ -357,14 +382,31 @@ def main() -> None:
             return
 
         # 根據使用者選擇的市場類型格式化 ticker
+        original_input = user_ticker
+        display_name_override: str | None = None
+
         if market_type == "TW":
-            # 台股：純數字補 .TW，已有 .TW 則直接使用
+            # 台股：支援「公司名稱」或「股票代號」
+            norm = _normalize_tw_name(user_ticker)
+            resolved_code: str | None = None
+
             if user_ticker.isdigit():
-                backend_ticker = f"{user_ticker}.TW"
-            elif user_ticker.endswith(".TW"):
-                backend_ticker = user_ticker
-            else:
-                backend_ticker = f"{user_ticker}.TW"
+                resolved_code = user_ticker
+            elif user_ticker.endswith(".TW") and user_ticker[:-3].isdigit():
+                resolved_code = user_ticker[:-3]
+            elif norm in TW_COMPANY_NAME_TO_TICKER:
+                resolved_code = TW_COMPANY_NAME_TO_TICKER[norm]
+                display_name_override = original_input  # 優先顯示使用者輸入的中文名稱
+
+            if resolved_code is None:
+                st.error(
+                    "台股目前僅支援「股票代號」或已知公司名稱。"
+                    "請輸入正確的台股代號（如 2330），或將公司名稱加入程式中的對應表。"
+                )
+                return
+
+            backend_ticker = f"{resolved_code}.TW"
+
         elif market_type == "CRYPTO":
             # 加密貨幣：補 -USD，已有 -USD 則直接使用
             if user_ticker.endswith("-USD"):
@@ -489,6 +531,10 @@ def main() -> None:
             except Exception:
                 stock_name = None
 
+            # 決定顯示用代號與名稱（確保圖表標題清楚標示「代號 + 名稱」）
+            display_code = backend_ticker
+            display_name = display_name_override or stock_name or original_input
+
             with col_chart:
                 chart_df = raw_df.tail(60).copy()
                 if chart_df.empty:
@@ -520,11 +566,7 @@ def main() -> None:
 
                     fig.update_layout(
                         title=(
-                            (
-                                f"{user_ticker} ({stock_name})"
-                                if stock_name
-                                else user_ticker
-                            )
+                            f"{display_code} ({display_name})"
                             + f" - {chinese_name} / {hexagram_name} "
                             f"(最近 60 日價格走勢)"
                         ),
@@ -546,8 +588,8 @@ def main() -> None:
                 st.markdown("#### I-Ching 市場卦象")
                 st.markdown(
                     f'<div class="ticker-badge">'
-                    f'<span class="symbol">{user_ticker}</span>'
-                    f'<span class="label"> / 市場結構卦象</span>'
+                    f'<span class="symbol">{display_code}</span>'
+                    f'<span class="label"> / {display_name} / 市場結構卦象</span>'
                     f"</div>",
                     unsafe_allow_html=True,
                 )

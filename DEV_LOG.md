@@ -2885,6 +2885,59 @@ train_loader, test_loader = processor.split_data(X_num, X_hex, y)
 
 ---
 
+## 2025-01-23 | Dashboard 台股公司名稱輸入與圖表標示優化
+
+### 步驟：支援台股公司名稱輸入與清楚顯示代號＋名稱
+
+**日期**: 2025-01-23  
+**狀態**: ✅ 完成
+
+#### 設計目標
+
+1. 在 Dashboard 上，台股市場除了可輸入股票代號，也能直接輸入常見公司名稱（例如「台積電」、「鴻海」、「聯發科」）。
+2. 按下卜卦後，K 線圖與右側卦象卡片都要明確標示「股票代號＋公司名稱」，避免只看到代碼不知道是哪一家公司。
+
+#### 實作細節
+
+1. **台股公司名稱對應表**（`dashboard.py`）
+   - 新增 `TW_COMPANY_NAME_TO_TICKER` 映射，例如：
+     - 「台積電／臺積電／台灣積體電路（製造）」 → `2330`
+     - 「鴻海／鴻海精密（工業）」 → `2317`
+     - 「聯發科／聯發科技」 → `2454`
+   - 新增 `_normalize_tw_name()`，將使用者輸入的公司名稱簡單正規化：
+     - 去尾詞（「股份有限公司」、「公司」、「股份有限」等）
+     - 去空白，便於比對。
+
+2. **輸入解析邏輯（僅限 `market_type == "TW"`）**
+   - 若輸入為純數字（或 `1234.TW`），視為「股票代號」。
+   - 否則將正規化後的字串拿去 `TW_COMPANY_NAME_TO_TICKER` 查找：
+     - 找到時，取得對應代號並以此組成 `backend_ticker = f"{code}.TW"`。
+     - 同時記錄 `display_name_override = 原始輸入公司名稱`，供後續圖表標題使用。
+   - 若查不到任何代號，顯示錯誤訊息提示目前僅支援對應表內公司名稱或明確代號。
+
+3. **圖表與卦象標題統一顯示「代號＋名稱」**
+   - 新增 `display_code` 與 `display_name`：
+     - `display_code = backend_ticker`（如 `2330.TW`）。
+     - `display_name = display_name_override or stock_name or original_input`：
+       - 優先使用使用者輸入的公司名稱，
+       - 其次是 yfinance 的 `shortName/longName`，
+       - 最後才退回原始輸入字串。
+   - **K 線圖標題**：
+     - 由原本的 `user_ticker` 改為  
+       `f"{display_code} ({display_name}) - {chinese_name} / {hexagram_name} (最近 60 日價格走勢)"`。
+   - **右側卦象徽章**：
+     - 由原本的 `symbol = user_ticker` 改為：
+       - `symbol = display_code`
+       - `label = f" / {display_name} / 市場結構卦象"`。
+
+#### 測試結果
+
+- ✅ 輸入「2330」：能正確解析為 `2330.TW`，圖表與卦象標題顯示 `2330.TW (TAIWAN SEMICONDUCTOR MANUFACTUR...)`。
+- ✅ 輸入「台積電」：能正確解析為 `2330.TW`，並在標題與卦象徽章顯示 `2330.TW (台積電)`。
+- ✅ US、CRYPTO 市場邏輯維持不變，不受影響。
+
+---
+
 ## 2025-01-23 | 卦象「只算一次」與易經原文一致性修正
 
 ### 步驟：Calculate Once, Use Everywhere（Dashboard ↔ Oracle）
