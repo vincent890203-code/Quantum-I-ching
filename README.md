@@ -19,11 +19,14 @@
 
 - **知識庫與 RAG (Phase 2)**
   - `config.py` + `HEXAGRAM_MAP`：完整 64 卦對照表（ID、英文名、繁中卦名）。
-  - `data/iching_book.json`：64 卦文本知識庫（卦辭／象辭）。
-  - `knowledge_loader.py`：將 JSON 轉成可嵌入文件物件。
+  - `setup_iching_db.py`：從 [john-walks-slow/open-iching](https://github.com/john-walks-slow/open-iching) 下載完整易經資料（64 卦含六爻），轉為統一格式並儲存至 `data/iching_complete.json`。
+  - `convert_iching_s2t.py`：將 `iching_complete.json` 內簡體中文轉為繁體，並重建 ChromaDB 向量庫。
+  - `knowledge_loader.py`：將 JSON 轉成可嵌入文件物件（主卦 + 六爻，共約 450 份文件）。
   - `vector_store.py`：使用 ChromaDB + SentenceTransformers 建立本地向量資料庫。
   - `oracle_chat.py` (`Oracle` 類別)：
-    - 讀取市場資料 → 生成卦象 → 查詢易經文本 → 呼叫 Gemini。
+    - 實作傳統「之卦 (Zhi Gua)」策略：依動爻數量（0-6）動態選擇查詢策略。
+    - 引入 **貞 (Zhen) / 悔 (Hui)** 架構：貞=主體/支撐/長期/進場，悔=客體/阻力/短期/出場。
+    - 讀取市場資料 → 生成卦象 → 依策略查詢易經文本 → 呼叫 Gemini。
     - 輸出結構化、繁體中文的投資解讀（Executive Summary / 易經原文 / 現代解讀 / 操作建議）。
 
 - **前端介面 (Phase 4)**
@@ -60,6 +63,23 @@ pip install -r requirements.txt
 ```env
 GOOGLE_API_KEY=your_gemini_api_key_here
 ```
+
+### 4. 初始化易經知識庫
+
+首次使用前，需要下載並建立易經向量資料庫：
+
+```bash
+# 步驟 1: 下載易經資料（從 john-walks-slow/open-iching）
+python setup_iching_db.py
+
+# 步驟 2: 簡體轉繁體並重建向量庫（約 450 份文件：64 主卦 + 386 爻）
+python convert_iching_s2t.py
+```
+
+**說明**：
+- `setup_iching_db.py` 會從 jsDelivr CDN 下載 open-iching 的 `iching/iching.json`，驗證後轉為統一格式儲存。
+- `convert_iching_s2t.py` 使用 OpenCC 將簡體轉為繁體，並重建 ChromaDB 向量庫（若未安裝 `opencc-python-reimplemented` 會自動安裝）。
+- 之後執行 `oracle_chat.py` 或 `dashboard.py` 時，向量庫會自動載入。
 
 ---
 
@@ -129,9 +149,11 @@ streamlit run dashboard.py
 - `data_loader.py`：抓取 Yahoo Finance 歷史資料，支援 TW / US / CRYPTO。
 - `market_encoder.py`：Whale Volume 四象邏輯 + 六爻卦象生成。
 - `iching_core.py`：當前卦／未來卦／動爻計算與卦名查詢。
-- `knowledge_loader.py`：載入 `data/iching_book.json` 為 RAG 文件。
+- `setup_iching_db.py`：下載 open-iching 易經資料並轉為統一格式。
+- `convert_iching_s2t.py`：簡體轉繁體並重建向量庫。
+- `knowledge_loader.py`：載入 `data/iching_complete.json` 為 RAG 文件（主卦 + 六爻）。
 - `vector_store.py`：Chroma 向量資料庫（語義檢索易經文本）。
-- `oracle_chat.py`：Quantum I-Ching 神諭（整合市場資料、卦象、RAG、Gemini）。
+- `oracle_chat.py`：Quantum I-Ching 神諭（整合市場資料、卦象、RAG、Gemini），實作之卦策略與貞／悔架構。
 - `dashboard.py`：Streamlit 前端儀表板（台股優先、K 線＋卦象＋解讀）。
 - `model_lstm.py`：LSTM 模型與訓練流程。
 - `backtester.py`：策略回測引擎。
@@ -151,6 +173,21 @@ streamlit run dashboard.py
 
 ---
 
-若要了解所有細部設計決策（含 yfinance 相容性、Windows 編碼問題、Gemini 模型選擇、Streamlit UI 除錯歷程等），請參考 `DEV_LOG.md`。  
+## 核心功能：之卦 (Zhi Gua) 策略
+
+`Oracle` 類別實作傳統易經「之卦」解法，依動爻（6、9）數量動態選擇查詢策略：
+
+- **0 動爻**：Total Acceptance，查本卦卦辭／象辭。
+- **1 動爻**：Specific Focus，僅查該動爻文本（如「乾卦 初九」）。
+- **2 動爻**：Primary vs Secondary，下爻為貞（進場／支撐）、上爻為悔（出場／阻力）。
+- **3 動爻**：Hedging Moment，本卦為貞（持有）、之卦為悔（風險）。
+- **4 或 5 動爻**：Trend Reversal，之卦為貞（主趨勢）、本卦為悔（歷史）。
+- **6 動爻**：Extreme Reversal，乾卦用「用九」、坤卦用「用六」，其餘用之卦卦辭。
+
+系統會依策略自動查詢對應的易經文本，並在 Gemini 提示中注入 **貞 (Zhen) / 悔 (Hui)** 架構，產出具主客、支撐／阻力、進出場意涵的金融建議。
+
+---
+
+若要了解所有細部設計決策（含 yfinance 相容性、Windows 編碼問題、Gemini 模型選擇、Streamlit UI 除錯歷程、之卦策略實作、open-iching 資料來源等），請參考 `DEV_LOG.md`。  
 未來如要擴充新的前端（例如 FastAPI / React），建議沿用 `Oracle` 作為單一後端入口。 
 
