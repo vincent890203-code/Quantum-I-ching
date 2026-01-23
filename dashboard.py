@@ -28,6 +28,15 @@ TW_COMPANY_NAME_TO_TICKER: dict[str, str] = {
     "台達電": "2308",
 }
 
+# 反向映射：從股票代號到中文名稱（用於圖表標題顯示）
+TW_TICKER_TO_CHINESE_NAME: dict[str, str] = {
+    "2330": "台積電",
+    "2317": "鴻海",
+    "2454": "聯發科",
+    "2002": "中鋼",
+    "2308": "台達電",
+}
+
 
 def _normalize_tw_name(name: str) -> str:
     """簡單正規化台股公司名稱，去除空白與常見尾詞."""
@@ -324,6 +333,333 @@ def calculate_future_binary(ritual_sequence: list[int]) -> str:
     return "".join(future_bits)
 
 
+def _split_markdown_sections(text: str) -> list[tuple[str, str]]:
+    """簡單切割 Markdown，依標題（# / ## / ###）分段."""
+    lines = text.splitlines()
+    sections: list[tuple[str, list[str]]] = []
+    current_title: str | None = None
+    current_body: list[str] = []
+
+    for line in lines:
+        if line.lstrip().startswith("#"):
+            # 儲存上一段
+            if current_title is not None:
+                sections.append((current_title, current_body))
+            # 新標題
+            title = line.lstrip("#").strip()
+            current_title = title
+            current_body = []
+        else:
+            current_body.append(line)
+
+    if current_title is not None:
+        sections.append((current_title, current_body))
+
+    # 轉成 (title, content_str)
+    return [(t, "\n".join(b).strip()) for t, b in sections]
+
+
+def _render_quantitative_bridge(
+    raw_df: pd.DataFrame,
+    ritual_sequence: list[int],
+    moving_lines: list[int],
+) -> None:
+    """在圖表與文字解讀之間插入「量化橋接」指標列.
+
+    - 價格：當日收盤與昨日比較
+    - RVOL：當日量 / 20 日平均量
+    - 系統狀態：依動爻數量評估穩定度
+    - 趨勢強度：Price vs MA20 粗略判斷多空
+    """
+    if raw_df is None or raw_df.empty:
+        return
+
+    # 確保有足夠資料計算漲跌與均量
+    if "Close" not in raw_df.columns:
+        return
+
+    latest_close = float(raw_df["Close"].iloc[-1])
+    prev_close = float(raw_df["Close"].iloc[-2]) if len(raw_df) > 1 else latest_close
+    price_delta = latest_close - prev_close
+    price_delta_pct = (price_delta / prev_close * 100) if prev_close != 0 else 0.0
+
+    volume_available = "Volume" in raw_df.columns and not raw_df["Volume"].isna().all()
+    if volume_available:
+        vol_series = raw_df["Volume"].astype(float)
+        current_vol = float(vol_series.iloc[-1])
+        avg_vol_20 = float(vol_series.tail(20).mean())
+        rvol = current_vol / avg_vol_20 if avg_vol_20 > 0 else 1.0
+    else:
+        current_vol = 0.0
+        avg_vol_20 = 0.0
+        rvol = 1.0
+
+    # 系統狀態：依動爻數量判斷
+    moving_count = len(moving_lines)
+    if moving_count == 0:
+        system_state = "Stable"
+        system_desc = "0 動爻：結構相對穩定"
+    elif moving_count <= 2:
+        system_state = "Active"
+        system_desc = f"{moving_count} 動爻：結構開始活躍"
+    else:
+        system_state = "Volatile"
+        system_desc = f"{moving_count} 動爻：結構高度波動"
+
+    # 趨勢強度：以 Price > MA20 粗略判斷
+    ma20 = float(raw_df["Close"].tail(20).mean()) if len(raw_df) >= 20 else latest_close
+    if latest_close >= ma20:
+        trend_label = "Bullish"
+        trend_desc = "價格高於 20 日均線"
+    else:
+        trend_label = "Bearish"
+        trend_desc = "價格低於 20 日均線"
+
+    st.markdown("### 📊 量化橋接 (Quantitative Bridge)")
+    col_p, col_rvol, col_state, col_trend = st.columns(4)
+
+    # 價格指標
+    with col_p:
+        delta_str = f"{price_delta:+.2f} ({price_delta_pct:+.2f}%)"
+        st.metric(
+            label="收盤價 (Close Price)",
+            value=f"{latest_close:,.2f}",
+            delta=delta_str,
+            delta_color="normal" if price_delta >= 0 else "inverse",
+            help="目前的收盤價。括號內為與前一日的漲跌幅。",
+        )
+
+    # RVOL 指標
+    with col_rvol:
+        if volume_available and avg_vol_20 > 0:
+            rvol_str = f"{rvol:.2f}x"
+            st.metric(
+                label="RVOL (相對成交量)",
+                value=rvol_str,
+                delta="高於 20 日均量" if rvol > 1 else "低於 / 接近 20 日均量",
+                delta_color="inverse" if rvol > 1.5 else "normal",
+                help="相對成交量 (Relative Volume)。\n計算方式：今日成交量 / 過去 20 日平均成交量。\n數值 > 1.0 代表爆量，易經中常對應『變爻』的產生。",
+            )
+        else:
+            st.metric(
+                label="RVOL (相對成交量)",
+                value="N/A",
+                delta="資料不足",
+                help="相對成交量 (Relative Volume)。\n計算方式：今日成交量 / 過去 20 日平均成交量。\n數值 > 1.0 代表爆量，易經中常對應『變爻』的產生。",
+            )
+
+    # 系統狀態
+    with col_state:
+        st.metric(
+            label="系統狀態 (System State)",
+            value=system_state,
+            delta=system_desc,
+            help="對應易經的『動爻』數量。\n- Stable (0 動爻): 局勢穩定，看本卦。\n- Active (1-2 動爻): 趨勢醞釀中，關注變爻。\n- Volatile (3+ 動爻): 局勢混亂，變盤機率高，參考之卦。",
+        )
+
+    # 趨勢強度
+    with col_trend:
+        # 加上 🐂/🐻 圖示
+        trend_display = f"{trend_label} {'🐂' if trend_label == 'Bullish' else '🐻'}"
+        st.metric(
+            label="趨勢強度 (Trend Strength)",
+            value=trend_display,
+            delta=trend_desc,
+            delta_color="normal" if trend_label == "Bullish" else "inverse",
+            help="基於股價與 20 日均線 (月線) 的乖離判斷。\n- 牛市 🐂: 股價在均線之上，支撐強。\n- 熊市 🐻: 股價在均線之下，壓力大。",
+        )
+
+
+def _classify_action_tone(text: str) -> str:
+    """根據文字內容推斷操作建議色彩：buy / sell / neutral."""
+    t = text.lower()
+    # 偏多 / 買進
+    buy_keywords = [
+        "買進",
+        "加碼",
+        "佈局",
+        "偏多",
+        "看多",
+        "buy",
+        "long",
+    ]
+    sell_keywords = [
+        "賣出",
+        "減碼",
+        "停損",
+        "風險",
+        "觀望",
+        "看空",
+        "sell",
+        "short",
+    ]
+    if any(k in text for k in buy_keywords) or any(k in t for k in buy_keywords):
+        return "buy"
+    if any(k in text for k in sell_keywords) or any(k in t for k in sell_keywords):
+        return "sell"
+    return "neutral"
+
+
+def render_ai_response(ai_answer: str) -> None:
+    """依資訊層級呈現 AI 回應，避免重複段落."""
+    if not ai_answer:
+        st.info("目前尚未取得 Oracle 回應。")
+        return
+
+    # --- 優先嘗試：依 Markdown 標題分段 ---
+    sections = _split_markdown_sections(ai_answer)
+    summary_text: str | None = None
+    action_text: str | None = None
+    source_text: str | None = None
+    decoding_text: str | None = None
+
+    if sections:
+        for title, body in sections:
+            lower_title = title.lower()
+            if ("投資快訊" in title or "executive" in lower_title) and not summary_text:
+                summary_text = body.strip()
+            elif (
+                "操作建議" in title
+                or "action plan" in lower_title
+                or "操作策略" in title
+            ) and not action_text:
+                action_text = body.strip()
+            elif (
+                "易經原文" in title
+                or "經文" in title
+                or "the source" in lower_title
+            ) and not source_text:
+                source_text = body.strip()
+            elif (
+                "現代解讀" in title
+                or "deep dive" in lower_title
+                or "解析" in title
+            ) and not decoding_text:
+                decoding_text = body.strip()
+
+        # 若仍有缺漏，嘗試以剩餘段落補齊
+        if summary_text is None and sections:
+            summary_text = sections[0][1].strip()
+        if decoding_text is None and sections:
+            used_bodies = {summary_text, action_text, source_text}
+            remain_parts = [
+                body.strip()
+                for _, body in sections
+                if body.strip() and body.strip() not in used_bodies
+            ]
+            decoding_text = "\n\n".join(remain_parts).strip() if remain_parts else None
+
+    # --- Fallback：純文字斷行解析 ---
+    if summary_text is None or action_text is None:
+        paragraphs = [p.strip() for p in ai_answer.split("\n\n") if p.strip()]
+        if summary_text is None:
+            summary_text = paragraphs[0] if paragraphs else ai_answer
+
+        if action_text is None:
+            action_candidates = [
+                p
+                for p in paragraphs
+                if ("操作建議" in p or "建議" in p or "策略" in p)
+            ]
+            action_text = action_candidates[0] if action_candidates else summary_text
+
+        if source_text is None:
+            source_lines: list[str] = []
+            for line in ai_answer.splitlines():
+                if (
+                    "《" in line
+                    or "卦辭" in line
+                    or "彖傳" in line
+                    or "象傳" in line
+                    or "爻辭" in line
+                ):
+                    source_lines.append(line)
+            source_text = "\n".join(source_lines).strip() or None
+
+        if decoding_text is None:
+            remaining_text = (
+                "\n\n".join(paragraphs[1:]) if len(paragraphs) > 1 else ""
+            )
+            decoding_text = remaining_text or None
+
+    # 最終 fallback：全部使用原文
+    if summary_text is None:
+        summary_text = ai_answer
+    if action_text is None:
+        action_text = ai_answer
+
+    # --- 呈現層級 ---
+    st.markdown("## 🔮 Oracle's Advice / 卜卦解讀")
+
+    # 1. Executive Summary
+    st.markdown("### 🚀 投資快訊 (Executive Summary)")
+    st.markdown(summary_text)
+
+    # 2. Action Plan（永遠顯示，且僅顯示一次）
+    st.markdown("### 🎯 關鍵操作建議 (Action Plan)")
+    tone = _classify_action_tone(action_text)
+    if tone == "buy":
+        st.success(action_text)
+    elif tone == "sell":
+        st.error(action_text)
+    else:
+        st.info(action_text)
+
+    # 3. 詳細內容（易經原文 + 現代解讀）置於單一 expander
+    with st.expander("📜 點擊查看：易經原文與詳細現代解讀", expanded=False):
+        st.markdown("#### 📖 易經原文 (The Source)")
+        if source_text:
+            st.markdown(source_text)
+        else:
+            st.markdown("_目前回應中未偵測到明確的易經原文段落。_")
+
+        st.divider()
+
+        st.markdown("#### 💡 現代解讀 (Deep Dive)")
+        if decoding_text:
+            st.markdown(decoding_text)
+        else:
+            st.markdown("_目前回應中未偵測到額外的現代金融解讀內容。_")
+
+    st.caption(
+        "以上內容僅供研究與教育參考，不構成任何投資建議或買賣邀約，實際投資決策請自行評估風險。"
+    )
+
+
+def render_sentiment_gauge(binary_string: str | None) -> None:
+    """根據卦象二進制字串顯示多空情緒儀表（自訂 HTML/CSS 樣式）."""
+    if not isinstance(binary_string, str) or len(binary_string) != 6:
+        return
+    yang_count = binary_string.count("1")
+    yang_score = int(yang_count / 6 * 100)
+
+    # 顏色邏輯：>50% 紅色（多頭），<=50% 綠色（空頭）
+    bar_color = "#ff4b4b" if yang_score > 50 else "#00c853"
+    emoji = "🐂" if yang_score > 50 else "🐻"
+    sentiment_label = "多方氣勢強" if yang_score > 50 else "空方壓力重"
+
+    st.markdown("### 🔮 多方能量 (Bullish Probability)")
+
+    # 自訂 HTML/CSS 進度條（含 tooltip）
+    tooltip_text = "基於『之卦（未來）』的陽爻比例計算。陽爻越多，代表多方氣勢越強；陰爻越多，代表空方壓力越重。"
+    st.markdown(
+        f"""
+    <div style="position: relative;" title="{tooltip_text}">
+        <div style="background-color: #f0f2f6; border-radius: 10px; padding: 3px; margin-bottom: 8px; cursor: help;" title="{tooltip_text}">
+            <div style="width: {yang_score}%; background-color: {bar_color}; height: 24px; border-radius: 8px; transition: width 0.5s ease-in-out; display: flex; align-items: center; justify-content: flex-end; padding-right: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <span style="color: white; font-weight: 600; font-size: 0.85rem;">{yang_score}%</span>
+            </div>
+        </div>
+    </div>
+    <p style="font-size: 0.9rem; color: #374151; margin-top: 4px; margin-bottom: 0;" title="{tooltip_text}">
+        {emoji} <strong>{sentiment_label}</strong> - 多方能量約為 {yang_score}%（以陽爻比例估算）
+        <span style="font-size: 0.75rem; color: #6b7280; margin-left: 4px;">(懸停查看說明)</span>
+    </p>
+    """,
+        unsafe_allow_html=True,
+    )
+
+
 def main() -> None:
     """Streamlit 入口主程式."""
     # ===== 側邊欄設定 =====
@@ -384,11 +720,11 @@ def main() -> None:
         # 根據使用者選擇的市場類型格式化 ticker
         original_input = user_ticker
         display_name_override: str | None = None
+        resolved_code: str | None = None  # 提升到外層作用域，供後續使用
 
         if market_type == "TW":
             # 台股：支援「公司名稱」或「股票代號」
             norm = _normalize_tw_name(user_ticker)
-            resolved_code: str | None = None
 
             if user_ticker.isdigit():
                 resolved_code = user_ticker
@@ -533,7 +869,16 @@ def main() -> None:
 
             # 決定顯示用代號與名稱（確保圖表標題清楚標示「代號 + 名稱」）
             display_code = backend_ticker
-            display_name = display_name_override or stock_name or original_input
+            
+            # 優先順序：display_name_override > 台股中文名稱 > yfinance 英文名稱 > 原始輸入
+            if display_name_override:
+                display_name = display_name_override
+            elif market_type == "TW" and resolved_code:
+                # 台股：嘗試從反向映射取得中文名稱
+                chinese_name_from_map = TW_TICKER_TO_CHINESE_NAME.get(resolved_code)
+                display_name = chinese_name_from_map or stock_name or original_input
+            else:
+                display_name = stock_name or original_input
 
             with col_chart:
                 chart_df = raw_df.tail(60).copy()
@@ -549,6 +894,18 @@ def main() -> None:
                         "Date" if "Date" in chart_df.columns else chart_df.columns[0]
                     )
 
+                    # 計算 MA20 / MA60 作為技術參考線
+                    if "Close" in chart_df.columns:
+                        chart_df["MA20"] = (
+                            chart_df["Close"].rolling(window=20).mean()
+                        )
+                        chart_df["MA60"] = (
+                            chart_df["Close"].rolling(window=60).mean()
+                        )
+                    else:
+                        chart_df["MA20"] = None
+                        chart_df["MA60"] = None
+
                     fig = go.Figure(
                         data=[
                             go.Candlestick(
@@ -562,6 +919,26 @@ def main() -> None:
                                 name="Price",
                             )
                         ]
+                    )
+
+                    # 加入 MA20 / MA60 線條
+                    fig.add_trace(
+                        go.Scatter(
+                            x=chart_df[date_col],
+                            y=chart_df["MA20"],
+                            mode="lines",
+                            line=dict(color="#facc15", width=1.5),
+                            name="MA20 (貞/Support)",
+                        )
+                    )
+                    fig.add_trace(
+                        go.Scatter(
+                            x=chart_df[date_col],
+                            y=chart_df["MA60"],
+                            mode="lines",
+                            line=dict(color="#a855f7", width=1.5),
+                            name="MA60 (悔/Resistance)",
+                        )
                     )
 
                     fig.update_layout(
@@ -675,6 +1052,9 @@ def main() -> None:
                     )
                     st.caption(f"動爻：{moving_lines_str} ({len(moving_lines)} 個)")
 
+                    # 依之卦顯示 Sentiment Gauge
+                    render_sentiment_gauge(current_market_state.get("future_binary"))
+
                 else:
                     # 無動爻：只顯示本卦
                     st.markdown(
@@ -690,7 +1070,20 @@ def main() -> None:
                         show_title=True,
                     )
 
-            # ===== Step 4: AI 易經解讀（置於折線圖下方，使用 Streamlit 內建框線） =====
+                    # 若無之卦，使用本卦陽爻比例顯示情緒儀表
+                    render_sentiment_gauge(binary_code)
+
+            # ===== Step 4: 量化橋接指標列（連結價格與卦象） =====
+            moving_lines_for_state = [
+                i + 1 for i, n in enumerate(ritual_sequence) if n in (6, 9)
+            ]
+            _render_quantitative_bridge(
+                raw_df=raw_df,
+                ritual_sequence=ritual_sequence,
+                moving_lines=moving_lines_for_state,
+            )
+
+            # ===== Step 5: AI 易經解讀（依資訊層級呈現） =====
             # 使用單一來源的市場狀態，確保上方顯示與下方解讀使用完全相同的卦象
             ai_answer = oracle.ask(
                 backend_ticker,
@@ -699,14 +1092,9 @@ def main() -> None:
                 market_type=market_type,
             )
 
-            st.markdown("### 🧠 Oracle's Advice / 卜卦解讀")
-            # 使用 st.info 提供完整包覆的卡片樣式，並保留 Markdown 格式
-            st.info(ai_answer)
-            st.caption(
-                "以上內容僅供研究與教育參考，"
-                "不構成任何投資建議、買賣邀約或報酬保證，"
-                "實際投資決策請自行審慎評估風險。"
-            )
+            # 以帶邊框容器包覆整體文字解讀區，與上方圖表區隔
+            with st.container(border=True):
+                render_ai_response(ai_answer)
 
     else:
         # 尚未按下按鈕時，給予簡短提示
