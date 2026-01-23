@@ -2884,3 +2884,133 @@ train_loader, test_loader = processor.split_data(X_num, X_hex, y)
 - 所有 CSS 樣式與現有淺色主題一致。
 
 ---
+
+## 2025-01-23 | 卦象「只算一次」與易經原文一致性修正
+
+### 步驟：Calculate Once, Use Everywhere（Dashboard ↔ Oracle）
+
+**日期**: 2025-01-23  
+**狀態**: ✅ 完成
+
+#### 問題描述
+
+1. Dashboard 前端會自己算一次卦象（`MarketEncoder.generate_hexagrams`），用來畫本卦／之卦視覺化。
+2. `Oracle.ask()` 內部又會重新抓一次 yfinance 資料、重新跑 encoder 再算一次卦象。
+3. 若資料更新點落在兩次計算之間，或設定略有差異，可能導致：
+   - 上方圖形顯示的是某一卦（如「中孚 → 頤」），
+   - 下方 AI 解讀卻是另一卦或對應錯誤（例如易經原文出現「師卦」）。
+
+#### 設計目標
+
+- **卦象只算一次**：由 Dashboard 取得完整市場資料並產生卦象，再把同一份狀態物件傳給 `Oracle`。
+- **前後端卦象完全一致**：畫面上的本卦／之卦與 `Oracle.ask()` 內部使用的 `ritual_sequence`、本卦 ID、之卦 ID 完全相同。
+- **易經原文嚴格對應**：所有引用的經文（本卦＋之卦＋動爻）必須 100% 來自與畫面相同的卦與爻位。
+
+#### 實作細節
+
+1. **`oracle_chat.py` – `Oracle.ask()` 接受預計算市場狀態**
+   - 函式簽名改為：
+     ```python
+     def ask(
+         self,
+         ticker: str,
+         question: str,
+         market_type: Optional[str] = None,
+         precomputed_data: Optional[dict] = None,
+         hexagram_info: Optional[dict] = None,
+     ) -> str:
+     ```
+   - 參數優先順序：
+     1. `precomputed_data`（Dashboard 單一來源）
+     2. `hexagram_info`（舊版相容）
+     3. `_get_market_hexagram()`（完全由 Oracle 端重新計算）
+   - `precomputed_data` 結構範例：
+     ```python
+     {
+       "ticker": backend_ticker,
+       "market_type": market_type,
+       "raw_df": raw_df,
+       "encoded_df": encoded_df,
+       "latest_row_index": latest_row.name,
+       "ritual_sequence": ritual_sequence,
+       "ritual_sequence_str": ritual_sequence_str,
+       "binary_code": binary_code,
+       "hexagram_id": hexagram_id,
+       "hex_name": hexagram_name_full,
+       "hex_name_stripped": hexagram_name,
+       "chinese_name": chinese_name,
+       "future_binary": future_binary,
+       "future_hex_name": future_hex_name_full,
+       "future_hex_name_stripped": future_hex_name,
+       "future_chinese_name": future_chinese_name,
+     }
+     ```
+   - `ask()` 內部僅做型別整理（`ritual_sequence` → `List[int]`、卦名去括號），**不再重抓 yfinance／不再重跑 encoder**。
+
+2. **`dashboard.py` – 建立 `current_market_state` 作為單一真實來源**
+   - 在取得 `raw_df`、`encoded_df`、`latest_row`、`ritual_sequence`、`Hexagram_Binary`、本卦資訊後，建立：
+     ```python
+     current_market_state = {
+         "ticker": backend_ticker,
+         "market_type": market_type,
+         "raw_df": raw_df,
+         "encoded_df": encoded_df,
+         "latest_row_index": latest_row.name,
+         "ritual_sequence": ritual_sequence,
+         "ritual_sequence_str": ritual_sequence_str,
+         "binary_code": binary_code,
+         "hexagram_id": hexagram_id,
+         "hex_name": hexagram_name_full,
+         "hex_name_stripped": hexagram_name,
+         "chinese_name": chinese_name,
+         "future_binary": future_binary,
+         "future_hex_name": future_hex_name_full,
+         "future_hex_name_stripped": future_hex_name,
+         "future_chinese_name": future_chinese_name,
+     }
+     ```
+   - K 線圖、本卦／之卦視覺化全部直接使用這個 `current_market_state`。
+   - 呼叫 `Oracle` 時改為：
+     ```python
+     ai_answer = oracle.ask(
+         backend_ticker,
+         question or "Should I buy now?",
+         market_type=market_type,
+         precomputed_data=current_market_state,
+     )
+     ```
+
+3. **`Oracle` 端易經原文來源修正**
+   - 新增 `_iching_raw` 與 `_name_to_number` 快取：
+     - `_iching_raw`: `number -> iching_complete.json` 條目
+     - `_name_to_number`: 中文卦名 → number（用於 HEXAGRAM_MAP 不完整時補齊 ID）
+   - `_resolve_strategy()` 若從 `HEXAGRAM_MAP` 得到的 `current_hex_id` 或 `future_hex_id` 為 0，會改用 `_name_to_number` 以卦名查找正確的 `number`。
+   - `_get_iching_wisdom()` 不再依賴向量庫決定「是哪一卦」，而是根據查詢計畫中給定的 `hex_id`、`type`、`line_numbers`，**直接從 `iching_complete.json` 抽出：
+     - 本卦主辭：`judgment` + `image`
+     - 本卦動爻：對應 `lines[position]` 的 `meaning` + `xiang`
+     - 之卦主辭：`future_hex_id` 對應條目的 `judgment` + `image`
+   - 產生帶有標籤的原文片段，例如：
+     - `【本卦（中孚）：61. 中孚卦】卦辭：…`
+     - `【本卦動爻（中孚 第 5 爻，悔）：61. 中孚卦】第 5 爻：… 小象：…`
+     - `【之卦（頤）：27. 頤卦】卦辭：…`
+
+4. **LLM 提示調整**
+   - 強制要求 Gemini 在「📜 易經原文 (The Source)」段落**完整列出** `_get_iching_wisdom` 提供的所有段落，不得自行刪減或只選部分，並保留標籤，如 `【本卦…】`、`【之卦…】`。
+
+#### 效果
+
+- ✅ Dashboard 顯示的本卦／之卦與 `Oracle.ask()` 使用的卦象完全同步，卦象只算一次。
+- ✅ 易經原文只會出現正確的卦（例如中孚／頤），不再混入「師卦」等不相關內容。
+- ✅ 貞／悔 分析與卦象視覺（本卦／之卦／動爻）保持 100% 對應。
+
+#### 技術決策
+
+- **為什麼改用 `precomputed_data`？**
+  - 明確劃分責任：Dashboard 負責「算卦＋畫圖」，`Oracle` 負責「在既有卦象上解讀」。
+  - 減少 I/O 與重複計算，避免因資料時間點不同導致卦象不一致。
+
+- **為什麼直接從 `iching_complete.json` 抽原文？**
+  - 相對於語義搜尋，直接以 `hex_id + line_number` 抽取可以完全保證與畫面一致。
+  - 便於未來做更細緻的標註（如顯示「本卦／之卦／貞／悔」在文本中的精確來源）。
+
+---

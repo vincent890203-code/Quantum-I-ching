@@ -148,6 +148,73 @@ streamlit run dashboard.py
 
 ---
 
+## 程式架構與資料流程
+
+### 元件架構（高階）
+
+```mermaid
+flowchart LR
+    subgraph Frontend[Streamlit Dashboard]
+        UI[使用者輸入 Ticker / 問題 / 市場類型]
+        Chart[K 線圖視覺化]
+        HexView[本卦 → 之卦 視覺卡片]
+        AdviceView[Oracle's Advice / 卜卦解讀]
+    end
+
+    subgraph Backend[Python Backend]
+        DL[MarketDataLoader\n(yfinance)]
+        ME[MarketEncoder\n(價格→四象→六爻)]
+        Core[IChingCore\n(本卦/之卦/動爻)]
+        Oracle[Oracle\n(之卦策略 + 貞/悔 + Gemini)]
+        VS[IChingVectorStore\n(ChromaDB)]
+        KL[IChingKnowledgeLoader\n(iching_complete.json)]
+    end
+
+    UI -->|提交 Ticker/問題| DL
+    DL --> ME --> Core -->|ritual_sequence, hex_id, 本卦/之卦| UI
+    DL -->|raw_df| Chart
+    UI -->|precomputed_data\n(單一市場狀態)| Oracle
+    Oracle --> VS
+    VS --> KL
+    Oracle --> AdviceView
+    Core --> HexView
+```
+
+### Dashboard ↔ Oracle 單一來源流程
+
+```mermaid
+sequenceDiagram
+    participant User as 使用者
+    participant Dash as Streamlit Dashboard
+    participant Oracle as Oracle.ask
+    participant DL as MarketDataLoader
+    participant ME as MarketEncoder
+    participant Core as IChingCore
+    participant JSON as iching_complete.json
+
+    User->>Dash: 輸入 Ticker / 問題 / 市場類型\n點擊「Consult the Oracle」
+    Dash->>DL: fetch_data(ticker, market_type)
+    DL-->>Dash: raw_df
+    Dash->>ME: generate_hexagrams(raw_df)
+    ME-->>Dash: encoded_df (含 Ritual_Sequence, Hexagram_Binary)
+    Dash->>Core: interpret_sequence(ritual_sequence)
+    Core-->>Dash: current_hex / future_hex / moving_lines
+    Dash->>Dash: 組成 current_market_state\n(ritual_sequence, 本卦/之卦資訊...)
+    Dash->>Dash: 畫 K 線圖、本卦→之卦視覺卡片
+
+    Dash->>Oracle: ask(ticker, question,\nprecomputed_data=current_market_state)
+    Oracle->>Oracle: 使用 precomputed_data\n(不再重新抓資料/算卦)
+    Oracle->>Core: _resolve_strategy(本卦名稱, ritual_sequence)
+    Core-->>Oracle: 策略情境 + 查詢計畫\n(本卦/之卦 + 動爻)
+    Oracle->>JSON: 依 hex_id + line_number\n從 iching_complete.json 抽取經文
+    JSON-->>Oracle: 本卦＋之卦＋動爻原文
+    Oracle->>Oracle: 建立系統提示（含貞/悔框架）
+    Oracle-->>Dash: 卜卦解讀 Markdown
+    Dash-->>User: 顯示 Oracle's Advice / 易經原文
+```
+
+---
+
 ## 檔案導覽 (簡版)
 
 - `config.py`：全域設定（日期、目標股票清單、MARKET_TYPE、HEXAGRAM_MAP）。
@@ -158,8 +225,8 @@ streamlit run dashboard.py
 - `convert_iching_s2t.py`：簡體轉繁體並重建向量庫。
 - `knowledge_loader.py`：載入 `data/iching_complete.json` 為 RAG 文件（主卦 + 六爻）。
 - `vector_store.py`：Chroma 向量資料庫（語義檢索易經文本）。
-- `oracle_chat.py`：Quantum I-Ching 神諭（整合市場資料、卦象、RAG、Gemini），實作之卦策略與貞／悔架構。
-- `dashboard.py`：Streamlit 前端儀表板（台股優先、K 線＋卦象＋解讀）。
+- `oracle_chat.py`：Quantum I-Ching 神諭（整合市場資料、卦象、RAG、Gemini），實作之卦策略與貞／悔架構，並支援 Dashboard 傳入單一市場狀態（precomputed_data）避免重複算卦。
+- `dashboard.py`：Streamlit 前端儀表板（台股優先、K 線＋卦象＋解讀；本卦／之卦與卜卦解讀共用同一份 current_market_state）。
 - `model_lstm.py`：LSTM 模型與訓練流程。
 - `backtester.py`：策略回測引擎。
 - `DEV_LOG.md`：完整開發日誌與除錯紀錄（推薦先閱讀）。

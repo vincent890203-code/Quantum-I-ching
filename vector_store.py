@@ -6,7 +6,7 @@
 
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Optional, Sequence
 
 import chromadb
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
@@ -86,15 +86,23 @@ class IChingVectorStore:
     def query(
         self,
         query_text: str,
-        n_results: int = 1
+        n_results: int = 1,
+        hex_id: Optional[int] = None,
+        doc_type: Optional[str] = None,
+        line_numbers: Optional[Sequence[int]] = None,
     ) -> List[str]:
-        """查詢向量資料庫.
+        """查詢向量資料庫（可根據 metadata 嚴格過濾）.
 
-        使用語義搜尋找出與查詢文字最相關的文件。
+        使用語義搜尋找出與查詢文字最相關的文件，同時支援以
+        `hex_id`、`type`（main/line）與 `line_number` 等 metadata
+        進行精確過濾，確保只在指定卦象／爻位範圍內檢索。
 
         Args:
             query_text: 查詢文字
             n_results: 返回結果數量，預設為 1
+            hex_id: 若提供，僅在指定卦（number）內搜尋
+            doc_type: 若提供，限制為 "main" 或 "line"
+            line_numbers: 若提供，限制為指定爻位列表（1-6 或 7=用九/用六）
 
         Returns:
             檢索到的文件內容列表（按相關性排序）
@@ -104,10 +112,21 @@ class IChingVectorStore:
             - 需要提取 `['documents'][0]` 取得結果列表
             - 結果按相似度排序（最相關的在前面）
         """
+        # 構造 metadata 過濾條件，確保只在目標卦象／爻位中搜尋
+        where: dict = {}
+        if hex_id is not None:
+            where["hex_id"] = hex_id
+        if doc_type is not None:
+            where["type"] = doc_type
+        if line_numbers:
+            # 使用 $in 過濾多個爻位
+            where["line_number"] = {"$in": list(line_numbers)}
+
         # 執行查詢
         results = self.collection.query(
             query_texts=[query_text],
-            n_results=n_results
+            n_results=n_results,
+            where=where or None,
         )
 
         # 提取文件內容

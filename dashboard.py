@@ -446,7 +446,7 @@ def main() -> None:
                 st.error("卦象二進制編碼缺失或格式錯誤，無法顯示卦象。")
                 return
 
-            # 使用 IChingCore 取得卦象名稱
+            # 使用 IChingCore 取得卦象名稱（本卦）
             try:
                 interpretation = oracle.core.interpret_sequence(ritual_sequence)
                 current_hex = interpretation.get("current_hex", {}) or {}
@@ -462,6 +462,22 @@ def main() -> None:
                 hexagram_name = hexagram_name_full.split("(", 1)[0].strip()
             else:
                 hexagram_name = hexagram_name_full
+
+            # 構造單一來源的市場狀態（Calculate Once, Use Everywhere）
+            current_market_state: dict = {
+                "ticker": backend_ticker,
+                "market_type": market_type,
+                "raw_df": raw_df,
+                "encoded_df": encoded_df,
+                "latest_row_index": latest_row.name,
+                "ritual_sequence": ritual_sequence,
+                "ritual_sequence_str": ritual_sequence_str,
+                "binary_code": binary_code,
+                "hexagram_id": hexagram_id,
+                "hex_name": hexagram_name_full,
+                "hex_name_stripped": hexagram_name,
+                "chinese_name": chinese_name,
+            }
 
             # ===== Step 2: 市場 K 線圖（左側） =====
             stock_name: str | None = None
@@ -585,6 +601,12 @@ def main() -> None:
                             unsafe_allow_html=True,
                         )
 
+                    # 將之卦資訊存入 current_market_state，供 Oracle 使用（例如標題／説明）
+                    current_market_state["future_binary"] = future_binary
+                    current_market_state["future_hex_name"] = future_hex_name_full
+                    current_market_state["future_hex_name_stripped"] = future_hex_name
+                    current_market_state["future_chinese_name"] = future_chinese_name
+
                     with col_future:
                         st.markdown('<div class="hexagram-container">', unsafe_allow_html=True)
                         st.markdown(
@@ -627,24 +649,12 @@ def main() -> None:
                     )
 
             # ===== Step 4: AI 易經解讀（置於折線圖下方，使用 Streamlit 內建框線） =====
-            # 使用已計算好的卦象資訊，確保上方顯示與下方解讀使用同一個卦象
-            hexagram_info_for_ask = {
-                'hexagram_name': hexagram_name_full,  # 完整名稱（含括號）
-                'chinese_name': chinese_name,
-                'hexagram_id': hexagram_id,
-                'ritual_sequence': ritual_sequence,  # 確保是列表格式
-                'binary_code': binary_code  # 添加 binary_code 以便驗證一致性
-            }
-            # 驗證：確保 ritual_sequence 是列表格式
-            if not isinstance(ritual_sequence, list):
-                ritual_sequence = [int(ch) for ch in str(ritual_sequence)]
-                hexagram_info_for_ask['ritual_sequence'] = ritual_sequence
-            
+            # 使用單一來源的市場狀態，確保上方顯示與下方解讀使用完全相同的卦象
             ai_answer = oracle.ask(
                 backend_ticker,
                 question or "Should I buy now?",
+                precomputed_data=current_market_state,
                 market_type=market_type,
-                hexagram_info=hexagram_info_for_ask
             )
 
             st.markdown("### 🧠 Oracle's Advice / 卜卦解讀")

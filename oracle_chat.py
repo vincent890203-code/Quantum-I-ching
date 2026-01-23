@@ -5,7 +5,9 @@
 """
 
 import os
-from typing import List, Optional, Tuple
+import json
+from pathlib import Path
+from typing import List, Optional, Tuple, Dict, Any
 
 import google.generativeai as genai
 from dotenv import load_dotenv
@@ -53,6 +55,11 @@ class Oracle:
 
         # 初始化向量資料庫（載入 ChromaDB）
         self.vector_store = IChingVectorStore()
+
+        # 快取易經原始 JSON（用於依 hex_id／爻位嚴格抓原文）
+        self._iching_raw: Dict[int, Dict[str, Any]] | None = None
+        # 快取「中文卦名 → number」映射（用於當 HEXAGRAM_MAP 不完整時查找）
+        self._name_to_number: Dict[str, int] | None = None
 
         # 初始化 Gemini 模型
         # 嘗試多個模型，按優先順序：gemini-2.5-flash > gemini-pro-latest > gemini-2.5-pro
@@ -169,6 +176,38 @@ class Oracle:
             'binary_code': binary_code
         }
 
+    def _load_iching_raw(self) -> None:
+        """載入 iching_complete.json 並以 hex_id 為 key 快取，同時建立卦名映射."""
+        if self._iching_raw is not None:
+            return
+        path = Path("data/iching_complete.json")
+        if not path.exists():
+            self._iching_raw = {}
+            self._name_to_number = {}
+            return
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            self._iching_raw = {}
+            self._name_to_number = {}
+            return
+        mapping: Dict[int, Dict[str, Any]] = {}
+        name_map: Dict[str, int] = {}
+        if isinstance(data, list):
+            for item in data:
+                try:
+                    num = int(item.get("number", 0))
+                    name = item.get("name", "")
+                except Exception:
+                    continue
+                if num > 0:
+                    mapping[num] = item
+                    if name:
+                        name_map[name] = num
+        self._iching_raw = mapping
+        self._name_to_number = name_map
+
     def _get_future_hexagram_name(self, ritual_sequence: List[int]) -> str:
         """取得之卦（變爻後）的卦名.
 
@@ -194,10 +233,19 @@ class Oracle:
 
     def _resolve_strategy(
         self, current_hex_name: str, ritual_sequence: List[int]
-    ) -> Tuple[str, List[str], str]:
-        """依動爻數量決定之卦策略：情境、查詢列表、之卦名.
+    ) -> Tuple[str, List[dict], str]:
+        """依動爻數量決定之卦策略：情境、查詢計畫、之卦名.
 
-        動爻為 6 或 9。回傳 (strategy_context, search_queries, future_hex_name)。
+        動爻為 6 或 9。
+
+        Returns:
+            strategy_context: 文字說明（給 Gemini 用的策略敘述）
+            search_plan: 查詢計畫列表，每一筆包含：
+                - query: 查詢文字（給向量模型做語義補強）
+                - hex_id: 卦象編號（嚴格限制檢索範圍）
+                - type: "main" 或 "line"
+                - line_numbers: 需要的爻位列表（僅 type="line" 時使用）
+            future_hex_name: 之卦名稱（供系統提示顯示）
         """
         # 從 ritual_sequence 推算本卦與動爻
         current_binary = "".join(
@@ -206,6 +254,12 @@ class Oracle:
         current_hex = self.core.get_hexagram_name(current_binary)
         current_hex_id = current_hex.get("id", 0)
         current_nature = current_hex.get("nature", "?")
+        
+        # 如果 HEXAGRAM_MAP 不完整導致 current_hex_id = 0，從 iching_complete.json 查找
+        if current_hex_id == 0 and current_nature != "?":
+            self._load_iching_raw()
+            if self._name_to_number and current_nature in self._name_to_number:
+                current_hex_id = self._name_to_number[current_nature]
 
         moving = [i + 1 for i, n in enumerate(ritual_sequence) if n in (6, 9)]
         count = len(moving)
@@ -218,17 +272,33 @@ class Oracle:
         )
         future_hex = self.core.get_hexagram_name(future_binary)
         future_nature = future_hex.get("nature", "?")
+        future_hex_id = future_hex.get("id", 0)
+        
+        # 如果 HEXAGRAM_MAP 不完整導致 future_hex_id = 0，從 iching_complete.json 查找
+        if future_hex_id == 0 and future_nature != "?":
+            self._load_iching_raw()
+            if self._name_to_number and future_nature in self._name_to_number:
+                future_hex_id = self._name_to_number[future_nature]
 
-        # 查詢用：使用中文關鍵詞匹配實際文件格式
+        # 查詢用：中文關鍵詞 + 嚴格 metadata，確保只在本卦／之卦中檢索
         # 文件格式：主卦 = "【{number}. {name}卦】\n卦辭：{judgment}\n象曰：{image}"
         #           爻 = "【{name}卦】 {meaning}\n象曰：{xiang}"
-        q_main = f"{current_nature}卦 卦辭 象曰"  # 匹配主卦文件
-        q_future = f"{future_nature}卦 卦辭 象曰"  # 匹配之卦主卦文件
+        q_main = f"{current_nature}卦 卦辭 象曰"
+        q_future = f"{future_nature}卦 卦辭 象曰"
 
         if count == 0:
             # 0 動爻：全盤接受，市場穩定
             ctx = "Total Acceptance. 市場穩定，以本卦卦辭／象辭為主。"
-            return (ctx, [q_main], future_hex_name)
+            search_plan = [
+                {
+                    "query": q_main,
+                    "hex_id": current_hex_id,
+                    "type": "main",
+                    "line_numbers": [],
+                    "label": f"本卦（{current_nature}）",
+                }
+            ]
+            return (ctx, search_plan, future_hex_name)
 
         if count == 1:
             # 1 動爻：焦點在單一動爻
@@ -237,7 +307,24 @@ class Oracle:
             line_names = ["初", "二", "三", "四", "五", "上"]
             line_name = line_names[line - 1] if 1 <= line <= 6 else str(line)
             ctx = "Specific Focus. 注意單一動爻所指的層級或事件。"
-            return (ctx, [f"{current_nature}卦 {line_name}爻"], future_hex_name)
+            # 本卦指定動爻 + 之卦主卦，一起作為經文來源
+            search_plan = [
+                {
+                    "query": f"{current_nature}卦 {line_name}爻",
+                    "hex_id": current_hex_id,
+                    "type": "line",
+                    "line_numbers": [line],
+                    "label": f"本卦動爻（{current_nature} 第 {line} 爻）",
+                },
+                {
+                    "query": q_future,
+                    "hex_id": future_hex_id,
+                    "type": "main",
+                    "line_numbers": [],
+                    "label": f"之卦（{future_nature}）",
+                },
+            ]
+            return (ctx, search_plan, future_hex_name)
 
         if count == 2:
             # 2 動爻：主客對照，下爻貞（進場/支撐），上爻悔（出場/阻力）
@@ -250,11 +337,31 @@ class Oracle:
                 "Primary vs Secondary. 下爻為貞（進場／支撐），"
                 "上爻為悔（出場／阻力），需兼看兩爻。"
             )
-            return (
-                ctx,
-                [f"{current_nature}卦 {lo_name}爻", f"{current_nature}卦 {hi_name}爻"],
-                future_hex_name,
-            )
+            search_plan = [
+                {
+                    "query": f"{current_nature}卦 {lo_name}爻",
+                    "hex_id": current_hex_id,
+                    "type": "line",
+                    "line_numbers": [lo],
+                    "label": f"本卦動爻（{current_nature} 第 {lo} 爻，貞）",
+                },
+                {
+                    "query": f"{current_nature}卦 {hi_name}爻",
+                    "hex_id": current_hex_id,
+                    "type": "line",
+                    "line_numbers": [hi],
+                    "label": f"本卦動爻（{current_nature} 第 {hi} 爻，悔）",
+                },
+                {
+                    # 額外加入之卦主卦作為輔助參考，讓易經原文同時包含本卦與之卦
+                    "query": q_future,
+                    "hex_id": future_hex_id,
+                    "type": "main",
+                    "line_numbers": [],
+                    "label": f"之卦（{future_nature}）",
+                },
+            ]
+            return (ctx, search_plan, future_hex_name)
 
         if count == 3:
             # 3 動爻：對沖時刻，本卦貞（持有），之卦悔（風險）
@@ -262,7 +369,23 @@ class Oracle:
                 "Hedging Moment. 本卦為貞（持有），之卦為悔（風險），"
                 "需權衡本卦卦辭與之卦卦辭。"
             )
-            return (ctx, [q_main, q_future], future_hex_name)
+            search_plan = [
+                {
+                    "query": q_main,
+                    "hex_id": current_hex_id,
+                    "type": "main",
+                    "line_numbers": [],
+                    "label": f"本卦（{current_nature}）",
+                },
+                {
+                    "query": q_future,
+                    "hex_id": future_hex_id,
+                    "type": "main",
+                    "line_numbers": [],
+                    "label": f"之卦（{future_nature}）",
+                },
+            ]
+            return (ctx, search_plan, future_hex_name)
 
         if count in (4, 5):
             # 4 或 5 動爻：趨勢反轉，之卦貞（主趨勢），本卦悔（歷史）
@@ -270,57 +393,140 @@ class Oracle:
                 "Trend Reversal. 之卦為貞（主趨勢），本卦為悔（歷史），"
                 "以之卦卦辭為主、本卦卦辭為輔。"
             )
-            return (ctx, [q_future, q_main], future_hex_name)
+            search_plan = [
+                {
+                    "query": q_future,
+                    "hex_id": future_hex_id,
+                    "type": "main",
+                    "line_numbers": [],
+                    "label": f"之卦（{future_nature}，主趨勢）",
+                },
+                {
+                    "query": q_main,
+                    "hex_id": current_hex_id,
+                    "type": "main",
+                    "line_numbers": [],
+                    "label": f"本卦（{current_nature}，歷史）",
+                },
+            ]
+            return (ctx, search_plan, future_hex_name)
 
         # 6 動爻：極端反轉
         if current_nature == "乾":
             ctx = "Extreme Reversal. 乾卦六爻全變，用「用九」為準。"
-            return (ctx, ["乾卦 用九", "用九"], future_hex_name)
+            search_plan = [
+                {
+                    "query": "乾卦 用九",
+                    "hex_id": current_hex_id,
+                    "type": "line",
+                    # 一般 open-iching 會把「用九」放在 position=7
+                    "line_numbers": [7],
+                    "label": "本卦（乾卦 用九）",
+                }
+            ]
+            return (ctx, search_plan, future_hex_name)
         if current_nature == "坤":
             ctx = "Extreme Reversal. 坤卦六爻全變，用「用六」為準。"
-            return (ctx, ["坤卦 用六", "用六"], future_hex_name)
+            search_plan = [
+                {
+                    "query": "坤卦 用六",
+                    "hex_id": current_hex_id,
+                    "type": "line",
+                    "line_numbers": [7],
+                    "label": "本卦（坤卦 用六）",
+                }
+            ]
+            return (ctx, search_plan, future_hex_name)
         ctx = "Extreme Reversal. 六爻全變，以之卦卦辭為準。"
-        return (ctx, [q_future], future_hex_name)
+        search_plan = [
+            {
+                "query": q_future,
+                "hex_id": future_hex_id,
+                "type": "main",
+                "line_numbers": [],
+                "label": f"之卦（{future_nature}）",
+            }
+        ]
+        return (ctx, search_plan, future_hex_name)
 
     def _get_iching_wisdom(
         self,
-        search_queries: List[str],
+        search_queries: List[dict],
         user_question: str
     ) -> str:
-        """從向量資料庫依查詢列表檢索易經智慧.
+        """依本卦／之卦＋爻位，直接從原始 JSON 抽取精確經文.
 
-        依之卦策略產生的 search_queries 逐筆語義搜尋，合併結果。
+        不再依賴語義搜尋決定「是哪一卦」，而是嚴格根據
+        `hex_id`、`type`（main/line）、`line_numbers` 直接從
+        `data/iching_complete.json` 取出對應經文，確保與市場卦象
+        （本卦／之卦）完全一致。
 
         Args:
-            search_queries: 查詢字串列表（如 "乾卦 卦辭 象曰"、"乾卦 初爻"）
-            user_question: 用戶問題（可選用於提高相關性）
+            search_queries: 查詢計畫列表（每筆包含 hex_id, type, line_numbers, label 等）
+            user_question: 用戶問題（目前僅供未來擴充使用）
 
         Returns:
             合併後的易經文本；若無結果則回傳空字串。
         """
         if not search_queries:
             return ""
-        seen: set = set()
-        parts: List[str] = []
-        try:
-            for q in search_queries:
-                # 使用純查詢字串（不加入 user_question，避免干擾語義匹配）
-                results = self.vector_store.query(q, n_results=2)  # 減少結果數量，提高精確度
-                for r in results or []:
-                    if r and r not in seen:
-                        seen.add(r)
-                        parts.append(r)
-            return "\n\n".join(parts) if parts else ""
-        except Exception as e:
-            print(f"向量資料庫查詢錯誤: {e}")
+
+        self._load_iching_raw()
+        if not self._iching_raw:
             return ""
+
+        parts: List[str] = []
+        seen: set = set()
+
+        for spec in search_queries:
+            hex_id = spec.get("hex_id")
+            doc_type = spec.get("type")
+            line_numbers = spec.get("line_numbers") or []
+            label = spec.get("label")  # 如「本卦」「之卦」「本卦動爻」等
+
+            if not hex_id or hex_id not in self._iching_raw:
+                continue
+
+            hex_obj = self._iching_raw.get(hex_id) or {}
+            name = hex_obj.get("name", "?")
+            number = hex_obj.get("number", hex_id)
+            judgment = hex_obj.get("judgment") or hex_obj.get("judgement") or ""
+            image = hex_obj.get("image") or ""
+
+            prefix = f"【{label}：{number}. {name}卦】" if label else f"【{number}. {name}卦】"
+
+            if doc_type == "main":
+                text = f"{prefix}\n卦辭：{judgment}\n象曰：{image}".strip()
+                if text and text not in seen:
+                    seen.add(text)
+                    parts.append(text)
+            elif doc_type == "line":
+                lines = hex_obj.get("lines") or []
+                for ln in line_numbers:
+                    for idx, line in enumerate(lines):
+                        pos = line.get("position", idx + 1)
+                        try:
+                            pos = int(pos)
+                        except Exception:
+                            pos = idx + 1
+                        if pos != ln:
+                            continue
+                        meaning = line.get("meaning") or line.get("text") or ""
+                        xiang = line.get("xiang") or ""
+                        text = f"{prefix} 第 {ln} 爻：{meaning}\n小象：{xiang}".strip()
+                        if text and text not in seen:
+                            seen.add(text)
+                            parts.append(text)
+
+        return "\n\n".join(parts) if parts else ""
 
     def ask(
         self,
         ticker: str,
         question: str,
         market_type: Optional[str] = None,
-        hexagram_info: Optional[dict] = None
+        precomputed_data: Optional[dict] = None,
+        hexagram_info: Optional[dict] = None,
     ) -> str:
         """詢問神諭.
 
@@ -331,8 +537,15 @@ class Oracle:
             ticker: 股票代號（例如 "NVDA"）
             question: 用戶問題（例如 "Should I buy now?"）
             market_type: 市場類型（'US', 'TW', 'CRYPTO'），若為 None 則使用 settings.MARKET_TYPE
-            hexagram_info: 可選的已計算卦象資訊（包含 hexagram_name, chinese_name, hexagram_id, ritual_sequence），
-                           若提供則跳過重新計算，確保與上方顯示的卦象一致
+            precomputed_data: 由前端或其他模組預先計算好的市場卦象資訊，
+                建議結構包含：
+                - ritual_sequence: List[int]
+                - hex_name: 完整卦名（可含括號）
+                - chinese_name: 卦名（中文）
+                - hexagram_id: 卦序號
+                以及可選的：
+                - future_hex_name / future_binary 等（目前僅用於顯示）
+            hexagram_info: 舊版相容參數；可選的已計算卦象資訊
 
         Returns:
             Gemini 生成的回答文字
@@ -342,13 +555,40 @@ class Oracle:
             Exception: 如果 Gemini API 調用失敗
         """
         try:
+            print(f"[Oracle] Consulting for {ticker}...")
+
             # 步驟 1: 獲取市場卦象（含 ritual_sequence）
-            # 如果已提供 hexagram_info，直接使用；否則重新計算
-            if hexagram_info is not None:
-                hexagram_name_full = hexagram_info.get('hexagram_name', 'Unknown')
-                chinese_name = hexagram_info.get('chinese_name', '?')
-                hexagram_id = hexagram_info.get('hexagram_id', 0)
-                ritual_sequence = hexagram_info.get('ritual_sequence', [])
+            # 優先使用 precomputed_data，其次 hexagram_info，最後才重新計算
+            if precomputed_data is not None:
+                print("[Oracle] Using pre-computed market data from Dashboard.")
+                # 由前端／呼叫端預先計算的市場狀態（Calculate Once, Use Everywhere）
+                ritual_sequence = precomputed_data.get("ritual_sequence", [])
+                hexagram_name_full = (
+                    precomputed_data.get("hex_name")
+                    or precomputed_data.get("hexagram_name")
+                    or "Unknown"
+                )
+                chinese_name = precomputed_data.get("chinese_name", "?")
+                hexagram_id = precomputed_data.get("hexagram_id", 0)
+
+                # 確保 ritual_sequence 為 List[int]
+                if isinstance(ritual_sequence, str):
+                    ritual_sequence = [int(ch) for ch in str(ritual_sequence)]
+                elif not isinstance(ritual_sequence, list):
+                    ritual_sequence = list(ritual_sequence) if ritual_sequence else []
+
+                # 處理 hexagram_name（移除括號，與 _get_market_hexagram 一致）
+                if "(" in hexagram_name_full:
+                    hexagram_name = hexagram_name_full.split("(", 1)[0].strip()
+                else:
+                    hexagram_name = hexagram_name_full
+
+            elif hexagram_info is not None:
+                # 舊版相容邏輯：由呼叫端傳入 hexagram_info
+                hexagram_name_full = hexagram_info.get("hexagram_name", "Unknown")
+                chinese_name = hexagram_info.get("chinese_name", "?")
+                hexagram_id = hexagram_info.get("hexagram_id", 0)
+                ritual_sequence = hexagram_info.get("ritual_sequence", [])
                 # 確保 ritual_sequence 是列表格式
                 if isinstance(ritual_sequence, str):
                     ritual_sequence = [int(ch) for ch in str(ritual_sequence)]
@@ -360,11 +600,12 @@ class Oracle:
                 else:
                     hexagram_name = hexagram_name_full
             else:
+                # 完全由 Oracle 端重新計算（向後相容）
                 hexagram_info = self._get_market_hexagram(ticker, market_type=market_type)
-                hexagram_name = hexagram_info['hexagram_name']
-                chinese_name = hexagram_info['chinese_name']
-                hexagram_id = hexagram_info['hexagram_id']
-                ritual_sequence = hexagram_info['ritual_sequence']
+                hexagram_name = hexagram_info["hexagram_name"]
+                chinese_name = hexagram_info["chinese_name"]
+                hexagram_id = hexagram_info["hexagram_id"]
+                ritual_sequence = hexagram_info["ritual_sequence"]
 
             # 步驟 2: 依之卦法解析策略（情境、查詢列表、之卦名）
             strategy_context, search_queries, future_hex_name = self._resolve_strategy(
@@ -398,7 +639,7 @@ Your goal is to interpret ancient I-Ching hexagrams into **actionable modern sto
 
 2. **Structure** (Use Markdown headers and bullet points):
     * **🚀 投資快訊 (Executive Summary)**: A 1-sentence bottom line. Where applicable, state which aspect is 貞 (main/support) and which is 悔 (risk/resistance).
-    * **📜 易經原文 (The Source)**: Quote the most relevant 1-2 sentences from the provided I-Ching Text. If none, use general I-Ching principles.
+    * **📜 易經原文 (The Source)**: **MUST quote ALL provided I-Ching Text sections exactly as given, preserving the labels like 【本卦...】【之卦...】. Do NOT summarize, omit, or select only parts. If multiple sections are provided (e.g., both 本卦 and 之卦), display ALL of them.**
     * **💡 現代解讀 (Modern Decoding)**: Translate the metaphor into financial terms. Map 貞 to trend/support and 悔 to risk/exit levels when the strategy involves both.
     * **📈 操作建議 (Action Plan)**: Give concrete advice. Use 貞 for entries, hold zones, and support; use 悔 for exits, stop-loss, and resistance. Example: 「貞：XX 以下視為支撐，可持有」；「悔：YY 以上注意風險，考慮減碼」.
 
