@@ -44,6 +44,14 @@ class Settings:
     )
     YIN_YANG_THRESHOLD: float = 0.0
     MARKET_TYPE: str = "TW"  # 選項：'US', 'TW', 'CRYPTO'
+    
+    # 模型超參數（來自 Optuna 優化結果）
+    SEQUENCE_LENGTH: int = 30  # 最佳值：30（月週期）
+    HIDDEN_DIM: int = 256  # 最佳值：256
+    NUM_LAYERS: int = 1  # 最佳值：1
+    DROPOUT: float = 0.35  # 最佳值：0.35
+    LEARNING_RATE: float = 0.001  # 最佳值：0.001
+    PREDICTION_WINDOW: int = 5  # T+5 波動性預測
 
 
 # 六十四卦對照表

@@ -5,12 +5,16 @@
 
 from __future__ import annotations
 
+import os
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import yfinance as yf
+import xgboost as xgb
+import numpy as np
 
 from oracle_chat import Oracle
+from data_processor import DataProcessor
 
 
 # 常用台股公司名稱對應表（可依需求擴充）
@@ -246,6 +250,28 @@ def get_oracle(_version: str = _ORACLE_VERSION) -> Oracle:
         _version: 版本號，用於強制清除緩存（當 Oracle 類簽名改變時更新）
     """
     return Oracle()
+
+
+@st.cache_resource(show_spinner="正在載入波動性模型...")
+def load_volatility_model(model_path: str = "data/volatility_model.json") -> xgb.XGBClassifier | None:
+    """載入波動性預測模型.
+    
+    Args:
+        model_path: 模型檔案路徑。
+    
+    Returns:
+        載入的 XGBoost 模型，如果檔案不存在則返回 None。
+    """
+    if not os.path.exists(model_path):
+        return None
+    
+    try:
+        model = xgb.XGBClassifier()
+        model.load_model(model_path)
+        return model
+    except Exception as e:
+        st.error(f"載入波動性模型時發生錯誤: {e}")
+        return None
 
 
 def draw_hexagram(
@@ -624,6 +650,171 @@ def render_ai_response(ai_answer: str) -> None:
     st.caption(
         "以上內容僅供研究與教育參考，不構成任何投資建議或買賣邀約，實際投資決策請自行評估風險。"
     )
+
+
+def render_volatility_radar(
+    raw_df: pd.DataFrame,
+    ritual_sequence: list[int],
+    latest_row: pd.Series
+) -> None:
+    """顯示波動率雷達（Volatility Radar）.
+    
+    使用精簡版 XGBoost 模型預測波動性爆發機率。
+    
+    Args:
+        raw_df: 原始市場資料 DataFrame。
+        ritual_sequence: 儀式數字序列。
+        latest_row: 最新一筆編碼資料（包含 Close, Volume, RVOL, Daily_Return）。
+    """
+    # 載入模型
+    model = load_volatility_model()
+    if model is None:
+        st.warning("⚠️ 波動性模型尚未訓練，請先執行 `python save_model_c.py`")
+        return
+    
+    try:
+        # 提取易經特徵
+        processor = DataProcessor()
+        ritual_seq_str = "".join(str(n) for n in ritual_sequence)
+        iching_features = processor.extract_iching_features(ritual_seq_str)
+        
+        # 提取數值特徵（從最新一筆資料）
+        # latest_row 是 pandas Series，可以直接使用索引訪問
+        try:
+            close_val = float(latest_row['Close'])
+            volume_val = float(latest_row.get('Volume', 0))
+            rvol_val = float(latest_row.get('RVOL', 1.0))
+            daily_return_val = float(latest_row.get('Daily_Return', 0))
+        except (KeyError, ValueError) as e:
+            st.warning(f"無法提取數值特徵: {e}")
+            return
+        
+        numerical_features = np.array([
+            close_val,
+            volume_val,
+            rvol_val,
+            daily_return_val
+        ])
+        
+        # 只使用精簡特徵：Moving_Lines_Count 和 Energy_Delta
+        moving_lines_count = iching_features[2]  # Moving_Lines_Count
+        energy_delta = iching_features[3]  # Energy_Delta
+        
+        # 組合特徵向量（順序必須與訓練時一致）
+        feature_vector = np.array([
+            numerical_features[0],  # Close
+            numerical_features[1],  # Volume
+            numerical_features[2],  # RVOL
+            numerical_features[3],  # Daily_Return
+            moving_lines_count,     # Moving_Lines_Count
+            energy_delta            # Energy_Delta
+        ]).reshape(1, -1)
+        
+        # 預測波動性爆發機率
+        prob_breakout = model.predict_proba(feature_vector)[0, 1]
+        prob_percent = prob_breakout * 100
+        
+        # 顯示波動率雷達
+        st.markdown("### 🌊 波動率爆發機率 (Volatility Radar)")
+        
+        # 根據機率決定警告級別
+        if prob_percent > 70:
+            status_emoji = "🔴"
+            status_text = "極度危險 (Extreme Risk)"
+            status_color = "#dc2626"  # 紅色
+            pulse_style = "animation: pulse-danger 2s ease-in-out infinite;"
+        elif prob_percent > 50:
+            status_emoji = "🟠"
+            status_text = "警戒 (Warning)"
+            status_color = "#f59e0b"  # 橙色
+            pulse_style = ""
+        else:
+            status_emoji = "🟢"
+            status_text = "平穩 (Stable)"
+            status_color = "#10b981"  # 綠色
+            pulse_style = ""
+        
+        # 添加 CSS 動畫（如果需要）
+        if pulse_style:
+            st.markdown(
+                f"""
+                <style>
+                @keyframes pulse-danger {{
+                    0%, 100% {{
+                        box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4);
+                    }}
+                    50% {{
+                        box-shadow: 0 0 0 8px rgba(220, 38, 38, 0);
+                    }}
+                }}
+                .volatility-radar-container {{
+                    {pulse_style}
+                }}
+                </style>
+                """,
+                unsafe_allow_html=True
+            )
+        
+        # 顯示機率儀表
+        st.markdown(
+            f"""
+            <div class="volatility-radar-container" style="background-color: #ffffff; border-radius: 12px; padding: 20px; border: 2px solid {status_color}; margin-bottom: 12px;">
+                <div style="text-align: center; margin-bottom: 16px;">
+                    <div style="font-size: 3rem; font-weight: 700; color: {status_color}; margin-bottom: 8px;">
+                        {prob_percent:.1f}%
+                    </div>
+                    <div style="font-size: 1.2rem; font-weight: 600; color: #374151;">
+                        {status_emoji} {status_text}
+                    </div>
+                </div>
+                <div style="background-color: #f0f2f6; border-radius: 10px; padding: 3px; margin-bottom: 12px;">
+                    <div style="width: {prob_percent}%; background-color: {status_color}; height: 28px; border-radius: 8px; transition: width 0.5s ease-in-out; display: flex; align-items: center; justify-content: flex-end; padding-right: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                        <span style="color: white; font-weight: 600; font-size: 0.9rem;">{prob_percent:.1f}%</span>
+                    </div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        
+        # 顯示解釋性資訊
+        tooltip_text = (
+            "AI 偵測到「暴風雨前的寧靜」。"
+            "當動爻少（Moving_Lines_Count 低）且能量增強（Energy_Delta 高）時，變盤機率大增。"
+            "\n\n"
+            f"當前狀態：\n"
+            f"- 動爻數量: {int(moving_lines_count)}\n"
+            f"- 能量變化: {energy_delta:.2f}\n"
+            f"- 預測機率: {prob_percent:.1f}%"
+        )
+        
+        st.markdown(
+            f"""
+            <div style="background-color: #f9fafb; border-radius: 8px; padding: 12px; border-left: 4px solid {status_color};">
+                <p style="font-size: 0.9rem; color: #374151; margin: 0;" title="{tooltip_text}">
+                    <strong>📊 解釋：</strong> {tooltip_text.split('\\n\\n')[0]}
+                    <span style="font-size: 0.75rem; color: #6b7280; margin-left: 4px;">(懸停查看詳細資訊)</span>
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        
+        # 顯示特徵值（用於調試）
+        with st.expander("🔍 查看特徵值（用於調試）", expanded=False):
+            st.markdown(f"**數值特徵：**")
+            st.markdown(f"- Close: {numerical_features[0]:.2f}")
+            st.markdown(f"- Volume: {numerical_features[1]:,.0f}")
+            st.markdown(f"- RVOL: {numerical_features[2]:.2f}")
+            st.markdown(f"- Daily_Return: {numerical_features[3]:.4f}")
+            st.markdown(f"**易經特徵：**")
+            st.markdown(f"- Moving_Lines_Count: {moving_lines_count:.0f}")
+            st.markdown(f"- Energy_Delta: {energy_delta:.2f}")
+            st.markdown(f"**預測結果：**")
+            st.markdown(f"- 波動性爆發機率: {prob_percent:.2f}%")
+            
+    except Exception as e:
+        st.error(f"計算波動性預測時發生錯誤: {e}")
 
 
 def render_sentiment_gauge(binary_string: str | None) -> None:
@@ -1081,6 +1272,13 @@ def main() -> None:
                 raw_df=raw_df,
                 ritual_sequence=ritual_sequence,
                 moving_lines=moving_lines_for_state,
+            )
+
+            # ===== Step 4.5: 波動率雷達（Volatility Radar） =====
+            render_volatility_radar(
+                raw_df=raw_df,
+                ritual_sequence=ritual_sequence,
+                latest_row=latest_row
             )
 
             # ===== Step 5: AI 易經解讀（依資訊層級呈現） =====

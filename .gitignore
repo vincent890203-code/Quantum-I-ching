@@ -1,6 +1,131 @@
-.env
-venv/
+# Python
 __pycache__/
-data/*.pth
-.DS_Store
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# 環境變數
+.env
 *.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 作業系統
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# 環境變數
+.env
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 作業系統
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 模型文件（訓練好的模型不應該上傳）
+data/*.pth
+data/*.pt
+data/*.pkl
+data/volatility_model.json
+data/best_model.pth
+# 注意：data/iching_book.json 和 data/iching_complete.json 是源數據，應該保留
+
+# 向量資料庫（ChromaDB）
+data/chroma_db/
+data/chroma_db/**/*
+
+# 生成的圖片和圖表（可選，如果需要保留可以移除）
+data/*.png
+data/*.jpg
+data/*.jpeg
+
+# Optuna 優化結果（可選）
+config/best_params.json
+
+# 日誌文件
+*.log
+logs/
+
+# 臨時文件
+*.tmp
+*.temp
+.cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# 測試覆蓋率
+.coverage
+htmlcov/
+.pytest_cache/
+
+# 備份文件
+*.bak
+*.backup
+*~
+
+# 向量資料庫（ChromaDB）
+data/chroma_db/
+data/chroma_db/**/*
+
+# 生成的圖片和圖表（可選，如果需要保留可以移除）
+data/*.png
+data/*.jpg
+data/*.jpeg
+
+# Optuna 優化結果（可選）
+config/best_params.json
+
+# 日誌文件
+*.log
+logs/
+
+# 臨時文件
+*.tmp
+*.temp
+.cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# 測試覆蓋率
+.coverage
+htmlcov/
+.pytest_cache/
+
+# 備份文件
+*.bak
+*.backup
+*~

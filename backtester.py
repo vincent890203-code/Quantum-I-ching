@@ -71,11 +71,21 @@ class QuantumBacktester:
         # 初始化資料處理器
         self.processor = DataProcessor(sequence_length=10, prediction_window=1)
 
-        # 初始化並載入模型
-        self.model = QuantumLSTM().to(self.device)
-        state_dict = torch.load(self.model_path, map_location=self.device)
-        self.model.load_state_dict(state_dict)
-        self.model.eval()
+        # 初始化並載入模型（雙流架構）
+        self.model = QuantumLSTM(num_numerical_features=5).to(self.device)
+        try:
+            state_dict = torch.load(self.model_path, map_location=self.device)
+            self.model.load_state_dict(state_dict)
+            self.model.eval()
+        except RuntimeError as e:
+            if "size mismatch" in str(e) or "Missing key" in str(e):
+                raise RuntimeError(
+                    f"模型架構已變更。請使用 `python model_lstm.py` 重新訓練模型。\n"
+                    f"錯誤詳情: {e}\n"
+                    f"提示：舊模型使用單流 Embedding，新架構使用雙流 Embedding（主卦 + 變卦）。"
+                )
+            else:
+                raise
 
     def _prepare_aligned_dataframe(self) -> pd.DataFrame:
         """建立與序列對齊的清洗後 DataFrame.
@@ -96,6 +106,8 @@ class QuantumBacktester:
         ]
         has_hexagram_binary: bool = "Hexagram_Binary" in df.columns
         has_ritual_sequence: bool = "Ritual_Sequence" in df.columns
+        has_future_hex_id: bool = "Future_Hex_ID" in df.columns
+        has_num_moving_lines: bool = "Num_Moving_Lines" in df.columns
 
         # 刪除 NaN
         df = df.dropna(subset=required_numerical)
@@ -103,6 +115,11 @@ class QuantumBacktester:
             df = df.dropna(subset=["Hexagram_Binary"])
         if has_ritual_sequence:
             df = df.dropna(subset=["Ritual_Sequence"])
+        # 保留新欄位（如果存在）
+        if has_future_hex_id:
+            df = df.dropna(subset=["Future_Hex_ID"])
+        if has_num_moving_lines:
+            df = df.dropna(subset=["Num_Moving_Lines"])
 
         return df
 
@@ -115,8 +132,8 @@ class QuantumBacktester:
         # ===== 步驟 1: 準備資料 =====
         df_clean = self._prepare_aligned_dataframe()
 
-        # 由 DataProcessor 產生序列資料
-        X_num, X_hex, y = self.processor.prepare_data(self.encoded_df)
+        # 由 DataProcessor 產生序列資料（雙流架構）
+        X_num, X_main_hex, X_future_hex, y = self.processor.prepare_data(self.encoded_df)
         total_sequences: int = X_num.shape[0]
 
         # 使用與 DataProcessor.split_data 相同的拆分比例
@@ -132,27 +149,31 @@ class QuantumBacktester:
         if num_test_sequences == 0:
             raise ValueError("測試集序列數量為 0，無法進行回測。")
 
-        # 建立測試集資料張量
+        # 建立測試集資料張量（雙流架構）
         X_num_test = torch.tensor(
             X_num[test_start:test_end], dtype=torch.float32
         )
-        X_hex_test = torch.tensor(
-            X_hex[test_start:test_end], dtype=torch.long
+        X_main_hex_test = torch.tensor(
+            X_main_hex[test_start:test_end], dtype=torch.long
+        )
+        X_future_hex_test = torch.tensor(
+            X_future_hex[test_start:test_end], dtype=torch.long
         )
         y_test = torch.tensor(y[test_start:test_end], dtype=torch.float32)
 
-        test_dataset = list(zip(X_num_test, X_hex_test, y_test))
+        test_dataset = list(zip(X_num_test, X_main_hex_test, X_future_hex_test, y_test))
 
-        # ===== 步驟 2: 模型推論 =====
+        # ===== 步驟 2: 模型推論（雙流架構）=====
         self.model.eval()
         all_probs: List[float] = []
 
         with torch.no_grad():
-            for x_num, x_hex, _ in test_dataset:
+            for x_num, x_main, x_future, _ in test_dataset:
                 x_num = x_num.unsqueeze(0).to(self.device)
-                x_hex = x_hex.unsqueeze(0).to(self.device)
+                x_main = x_main.unsqueeze(0).to(self.device)
+                x_future = x_future.unsqueeze(0).to(self.device)
 
-                outputs: torch.Tensor = self.model(x_num, x_hex)
+                outputs: torch.Tensor = self.model(x_num, x_main, x_future)
                 prob: float = float(outputs.squeeze().cpu().item())
                 all_probs.append(prob)
 

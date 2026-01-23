@@ -14,37 +14,31 @@ from tqdm.auto import tqdm
 
 
 class QuantumLSTM(nn.Module):
-    """量子易經 LSTM 模型.
+    """量子易經 LSTM 模型（特徵工程方法）.
 
-    結合卦象嵌入與數值技術指標，進行二分類預測（上漲/下跌）。
+    使用數值特徵 + 易經手工特徵進行二分類預測（上漲/下跌）。
+    不再使用 Embedding 層，而是直接輸入數值特徵。
     """
 
     def __init__(
         self,
-        num_hexagrams: int = 64,
-        embedding_dim: int = 8,
-        num_numerical_features: int = 4,
-        hidden_dim: int = 64,
+        num_features: int = 9,  # 4 個數值特徵 + 5 個易經特徵
+        hidden_dim: int = 32,  # 降低到 32 以防止過擬合
         num_layers: int = 2,
         dropout: float = 0.2,
     ) -> None:
-        """初始化 QuantumLSTM 模型.
+        """初始化 QuantumLSTM 模型（特徵工程方法）.
 
         Args:
-            num_hexagrams: 卦象總數（預設 64）。
-            embedding_dim: 卦象嵌入維度。
-            num_numerical_features: 數值特徵數量（預設 4: Close, Volume, RVOL, Daily_Return）。
-            hidden_dim: LSTM 隱藏層維度。
+            num_features: 總特徵數量（預設 9: 4 個數值特徵 + 5 個易經特徵）。
+            hidden_dim: LSTM 隱藏層維度（預設 32，降低以防止過擬合）。
             num_layers: LSTM 堆疊層數。
             dropout: dropout 比例。
         """
         super().__init__()
 
-        # 卦象嵌入層
-        self.hex_embedding = nn.Embedding(num_hexagrams, embedding_dim)
-
-        # LSTM 輸入維度 = 數值特徵 + 卦象嵌入
-        input_dim: int = num_numerical_features + embedding_dim
+        # 直接使用數值特徵，無 Embedding 層
+        input_dim: int = num_features
 
         self.lstm = nn.LSTM(
             input_size=input_dim,
@@ -60,24 +54,16 @@ class QuantumLSTM(nn.Module):
 
     def forward(
         self,
-        x_num: torch.Tensor,
-        x_hex: torch.Tensor,
+        x: torch.Tensor,
     ) -> torch.Tensor:
-        """前向傳播.
+        """前向傳播（特徵工程方法）.
 
         Args:
-            x_num: 數值特徵，形狀為 (batch_size, seq_len, num_features)。
-            x_hex: 卦象 ID，形狀為 (batch_size, seq_len)。
+            x: 合併特徵，形狀為 (batch_size, seq_len, num_features)。
 
         Returns:
             預測機率，形狀為 (batch_size, 1)。
         """
-        # 卦象嵌入: (batch_size, seq_len, embedding_dim)
-        hex_embedded: torch.Tensor = self.hex_embedding(x_hex)
-
-        # 特徵融合: 在最後一個維度拼接數值特徵與卦象嵌入
-        x: torch.Tensor = torch.cat([x_num, hex_embedded], dim=2)
-
         # LSTM 輸出: output 形狀 (batch_size, seq_len, hidden_dim)
         output, _ = self.lstm(x)
 
@@ -104,6 +90,7 @@ class QuantumTrainer:
         learning_rate: float = 0.001,
         patience: int = 5,
         min_delta: float = 0.0,
+        weight_decay: float = 1e-5,
     ) -> None:
         """初始化訓練器.
 
@@ -112,16 +99,33 @@ class QuantumTrainer:
             learning_rate: 學習率。
             patience: early stopping 的容忍 epoch 數。
             min_delta: early stopping 判斷改善的最小差值。
+            weight_decay: L2 正則化係數（預設 1e-5）。
         """
         self.device: torch.device = torch.device(
             "cuda" if torch.cuda.is_available() else "cpu"
         )
         self.model = model.to(self.device)
         self.criterion = nn.BCELoss()
-        self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
+        self.optimizer = optim.Adam(
+            self.model.parameters(), 
+            lr=learning_rate,
+            weight_decay=weight_decay  # L2 正則化
+        )
         self.patience = patience
         self.min_delta = min_delta
         self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
+        
+        # 學習率調度器：當驗證損失停止改善時降低學習率
+        # 使用更保守的調度策略，避免學習率下降太快
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer,
+            mode='min',
+            factor=0.7,  # 改進：從 0.5 改為 0.7，更溫和的降低（30% vs 50%）
+            patience=4,  # 改進：從 2 改為 4，給模型更多時間適應當前學習率
+            min_lr=1e-6,  # 最小學習率
+            verbose=False  # 關閉 verbose 避免警告
+        )
 
     def train(
         self,
@@ -154,9 +158,11 @@ class QuantumTrainer:
         print("[INFO] Training configuration:")
         print(f"  Device: {self.device}")
         print(f"  Learning rate: {self.learning_rate}")
+        print(f"  Weight decay (L2): {self.weight_decay}")
         print(f"  Patience: {self.patience}")
         print(f"  Min delta: {self.min_delta}")
         print(f"  Epochs: {epochs}")
+        print(f"  LR Scheduler: ReduceLROnPlateau (factor=0.7, patience=4, 更保守)")
 
         epochs_without_improve: int = 0
 
@@ -173,13 +179,12 @@ class QuantumTrainer:
             )
 
             for batch in train_iter:
-                x_num, x_hex, y = batch
-                x_num = x_num.to(self.device)
-                x_hex = x_hex.to(self.device)
+                x, y = batch
+                x = x.to(self.device)
                 y = y.to(self.device)
 
-                # 前向傳播
-                outputs: torch.Tensor = self.model(x_num, x_hex)
+                # 前向傳播（特徵工程方法）
+                outputs: torch.Tensor = self.model(x)
 
                 # 確保 y 形狀與輸出一致
                 y = y.view_as(outputs)
@@ -211,12 +216,11 @@ class QuantumTrainer:
 
             with torch.no_grad():
                 for batch in val_iter:
-                    x_num, x_hex, y = batch
-                    x_num = x_num.to(self.device)
-                    x_hex = x_hex.to(self.device)
+                    x, y = batch
+                    x = x.to(self.device)
                     y = y.to(self.device)
 
-                    outputs = self.model(x_num, x_hex)
+                    outputs = self.model(x)
                     y = y.view_as(outputs)
                     loss = self.criterion(outputs, y)
 
@@ -230,10 +234,15 @@ class QuantumTrainer:
             history["train_loss"].append(avg_train_loss)
             history["val_loss"].append(avg_val_loss)
 
+            # 更新學習率調度器（基於驗證損失）
+            self.scheduler.step(avg_val_loss)
+            current_lr = self.optimizer.param_groups[0]['lr']
+
             print(
                 f"Epoch [{epoch}/{epochs}] - "
                 f"Train Loss: {avg_train_loss:.4f} - "
-                f"Val Loss: {avg_val_loss:.4f}"
+                f"Val Loss: {avg_val_loss:.4f} - "
+                f"LR: {current_lr:.6f}"
             )
 
             # 儲存最佳模型與 early stopping 判斷
@@ -281,12 +290,11 @@ class QuantumTrainer:
 
         with torch.no_grad():
             for batch in test_loader:
-                x_num, x_hex, y = batch
-                x_num = x_num.to(self.device)
-                x_hex = x_hex.to(self.device)
+                x, y = batch
+                x = x.to(self.device)
                 y = y.to(self.device)
 
-                outputs: torch.Tensor = self.model(x_num, x_hex)
+                outputs: torch.Tensor = self.model(x)
                 y = y.view_as(outputs)
                 loss: torch.Tensor = self.criterion(outputs, y)
 
@@ -342,25 +350,38 @@ if __name__ == "__main__":
                 "(至少需要 26 天)。訓練中止。"
             )
         else:
-            # 2. 準備訓練資料
+            # 2. 準備訓練資料（特徵工程方法）
             processor = DataProcessor(sequence_length=10, prediction_window=1)
             try:
-                X_num, X_hex, y = processor.prepare_data(encoded_data)
+                X, y = processor.prepare_data(encoded_data)
             except ValueError as e:
                 print(f"[ERROR] 資料準備失敗: {e}")
                 raise SystemExit(1)
 
-            train_loader, val_loader = processor.split_data(X_num, X_hex, y)
+            train_loader, val_loader = processor.split_data(X, y)
 
-            # 3. 建立模型與訓練器
-            model = QuantumLSTM()
-            trainer = QuantumTrainer(model)
+            # 3. 建立模型與訓練器（特徵工程方法）
+            model = QuantumLSTM(
+                num_features=9,  # 4 個數值特徵 + 5 個易經特徵
+                hidden_dim=32,  # 降低到 32 以防止過擬合
+                dropout=0.2
+            )
+            trainer = QuantumTrainer(
+                model,
+                learning_rate=0.001,
+                patience=10,
+                min_delta=0.0001,
+                weight_decay=1e-5
+            )
 
             # 4. 執行訓練
             print(
-                f"[INFO] 開始訓練 QuantumLSTM 模型，標的: {default_symbol}，"
+                f"[INFO] 開始訓練 QuantumLSTM 模型（特徵工程方法），標的: {default_symbol}，"
                 "sequence_length=10, prediction_window=1"
             )
+            print("[INFO] 架構：數值特徵 + 易經手工特徵（無 Embedding）")
+            print("[INFO] 特徵：Close, Volume, RVOL, Daily_Return + Yang_Count_Main, Yang_Count_Future, Moving_Lines_Count, Energy_Delta, Conflict_Score")
+            print("[INFO] Hidden Dim: 32 (降低以防止過擬合)")
             history = trainer.train(
                 train_loader=train_loader,
                 val_loader=val_loader,

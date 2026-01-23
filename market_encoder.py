@@ -9,7 +9,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from config import settings
+from config import HEXAGRAM_MAP, settings
+from iching_core import IChingCore
 
 
 class MarketEncoder:
@@ -168,6 +169,8 @@ class MarketEncoder:
                 - 9 和 7 -> "1"（陽爻）
                 - 6 和 8 -> "0"（陰爻）
                 - 例如："987896" -> "101010"
+            - Future_Hex_ID: 未來卦（之卦）的 ID（1-64，0 表示未知）
+            - Num_Moving_Lines: 動爻數量（0-6），統計 Ritual_Sequence 中 6 和 9 的數量
 
         Note:
             - 會自動丟棄 Volume_MA20 為 NaN 的列（前20天）
@@ -205,16 +208,24 @@ class MarketEncoder:
                 # 使用滾動窗口生成六爻序列
                 ritual_sequences = []
                 hexagram_binaries = []
+                future_hex_ids = []
+                num_moving_lines = []
+
+                core = IChingCore()
 
                 for i in range(len(ticker_df)):
                     if i < 5:  # 前5天無法形成完整卦象
                         ritual_sequences.append(None)
                         hexagram_binaries.append(None)
+                        future_hex_ids.append(None)
+                        num_moving_lines.append(None)
                     else:
                         window = ticker_df['Ritual_Num'].iloc[i-5:i+1]
                         if window.isna().any():
                             ritual_sequences.append(None)
                             hexagram_binaries.append(None)
+                            future_hex_ids.append(None)
+                            num_moving_lines.append(None)
                         else:
                             ritual_nums = window.astype(int).tolist()
                             ritual_sequence = ''.join(map(str, ritual_nums))
@@ -222,11 +233,26 @@ class MarketEncoder:
                                 '1' if num in [9, 7] else '0'
                                 for num in ritual_nums
                             )
+                            
+                            # 計算未來卦（之卦）的二進制編碼
+                            future_binary = core.calculate_future_hexagram(ritual_nums)
+                            
+                            # 查詢未來卦 ID
+                            future_hex_info = core.get_hexagram_name(future_binary)
+                            future_hex_id = future_hex_info.get('id', 0)
+                            
+                            # 計算動爻數量（6 和 9 的數量）
+                            moving_count = sum(1 for num in ritual_nums if num in [6, 9])
+                            
                             ritual_sequences.append(ritual_sequence)
                             hexagram_binaries.append(binary_sequence)
+                            future_hex_ids.append(future_hex_id)
+                            num_moving_lines.append(moving_count)
 
                 ticker_df['Ritual_Sequence'] = ritual_sequences
                 ticker_df['Hexagram_Binary'] = hexagram_binaries
+                ticker_df['Future_Hex_ID'] = future_hex_ids
+                ticker_df['Num_Moving_Lines'] = num_moving_lines
 
                 # 使用 MultiIndex 保持結構
                 ticker_df.columns = pd.MultiIndex.from_product(
@@ -254,16 +280,24 @@ class MarketEncoder:
                 # 生成六爻序列
                 ritual_sequences = []
                 hexagram_binaries = []
+                future_hex_ids = []
+                num_moving_lines = []
+
+                core = IChingCore()
 
                 for i in range(len(result)):
                     if i < 5:
                         ritual_sequences.append(None)
                         hexagram_binaries.append(None)
+                        future_hex_ids.append(None)
+                        num_moving_lines.append(None)
                     else:
                         window = result['Ritual_Num'].iloc[i-5:i+1]
                         if window.isna().any():
                             ritual_sequences.append(None)
                             hexagram_binaries.append(None)
+                            future_hex_ids.append(None)
+                            num_moving_lines.append(None)
                         else:
                             ritual_nums = window.astype(int).tolist()
                             ritual_sequence = ''.join(map(str, ritual_nums))
@@ -271,10 +305,25 @@ class MarketEncoder:
                                 '1' if num in [9, 7] else '0'
                                 for num in ritual_nums
                             )
+                            
+                            # 計算未來卦（之卦）的二進制編碼
+                            future_binary = core.calculate_future_hexagram(ritual_nums)
+                            
+                            # 查詢未來卦 ID
+                            future_hex_info = core.get_hexagram_name(future_binary)
+                            future_hex_id = future_hex_info.get('id', 0)
+                            
+                            # 計算動爻數量（6 和 9 的數量）
+                            moving_count = sum(1 for num in ritual_nums if num in [6, 9])
+                            
                             ritual_sequences.append(ritual_sequence)
                             hexagram_binaries.append(binary_sequence)
+                            future_hex_ids.append(future_hex_id)
+                            num_moving_lines.append(moving_count)
 
                 result['Ritual_Sequence'] = ritual_sequences
                 result['Hexagram_Binary'] = hexagram_binaries
+                result['Future_Hex_ID'] = future_hex_ids
+                result['Num_Moving_Lines'] = num_moving_lines
 
         return result

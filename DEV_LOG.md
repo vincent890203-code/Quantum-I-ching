@@ -3177,3 +3177,892 @@ train_loader, test_loader = processor.split_data(X_num, X_hex, y)
 - `current_market_state` 傳遞邏輯不變
 
 ---
+
+## 2025-01-23 | Phase 3 - 雙流 Embedding 架構升級
+
+### 步驟：LSTM 模型架構重大升級 - Dual-Stream Embedding
+
+**日期**: 2025-01-23  
+**狀態**: ✅ 完成
+
+#### 設計目標
+
+將 LSTM 模型從單一流 Embedding（僅主卦）升級為**雙流 Embedding 架構**：
+1. **Main Stream**: 主卦（本卦）Embedding
+2. **Future Stream**: 變卦（之卦）Embedding
+3. **Energy Feature**: 動爻數量（Num_Moving_Lines，0-6）作為數值特徵
+
+#### 實作細節
+
+1. **`market_encoder.py` 更新**
+   - 新增 `Future_Hex_ID` 欄位：計算變卦（之卦）的 ID（1-64）
+   - 新增 `Num_Moving_Lines` 欄位：統計 `Ritual_Sequence` 中 6 和 9 的數量（0-6）
+   - 使用 `IChingCore.calculate_future_hexagram()` 計算變卦二進制編碼
+   - 使用 `IChingCore.get_hexagram_name()` 查詢變卦 ID
+
+2. **`data_processor.py` 重構**
+   - `QuantumDataset` 更新為四元組：`(X_num, X_main_hex, X_future_hex, y)`
+   - `prepare_data()` 返回四個組件：
+     * `X_num`: 數值特徵（5 維：Close, Volume, RVOL, Daily_Return, Num_Moving_Lines）
+     * `X_main_hex`: 主卦 ID 序列（0-63）
+     * `X_future_hex`: 變卦 ID 序列（0-63）
+     * `y`: 標籤（二分類）
+   - `split_data()` 適配四個組件的分割
+   - `Num_Moving_Lines` 作為連續變數進行標準化
+
+3. **`model_lstm.py` 架構升級**
+   - `QuantumLSTM.__init__()`:
+     * 新增 `self.future_hex_embedding`（與主卦相同的維度）
+     * `num_numerical_features` 預設值更新為 5（包含 Num_Moving_Lines）
+     * LSTM 輸入維度 = 數值特徵 + 主卦嵌入 + 變卦嵌入
+   - `forward()` 方法：
+     * 接受三個輸入：`(x_num, x_main, x_future)`
+     * **融合邏輯**：拼接 `[x_num, main_emb, future_emb]`（不平均，保留不同結構資訊）
+   - `QuantumTrainer` 訓練循環：
+     * 更新為解包四元組：`(x_num, x_main, x_future, y)`
+     * 所有訓練/驗證/測試階段都適配新架構
+
+4. **`backtester.py` 適配**
+   - `_prepare_aligned_dataframe()` 保留 `Future_Hex_ID` 和 `Ritual_Sequence`
+   - `run_backtest()` 準備三個張量：`(x_num, x_main, x_future)`
+   - 模型初始化使用 `num_numerical_features=5`
+   - **安全性檢查**：如果 `load_state_dict` 失敗（架構不匹配），提供清晰的錯誤訊息：
+     ```
+     "模型架構已變更。請使用 `python model_lstm.py` 重新訓練模型。"
+     ```
+
+5. **資料重置工具 (`reset_data.py`)**
+   - 清除已處理的 CSV/PKL 快取
+   - 刪除舊模型 `best_model.pth`（架構已變更）
+   - 刪除向量資料庫 `chroma_db/`（會自動重建）
+   - **保留**原始資料檔案（`iching_complete.json`, `iching_book.json`）
+
+#### 技術決策
+
+- **為什麼使用雙流 Embedding 而非平均？**
+  - 拼接（concatenate）保留主卦和變卦的**不同結構資訊**
+  - 平均會丟失變卦的獨立語義
+  - 符合易經「當前 vs. 未來」的對比邏輯
+
+- **為什麼將動爻數量作為數值特徵？**
+  - 動爻數量（0-6）代表市場的「能量」或「波動性」
+  - 作為連續變數，可以標準化並與其他技術指標一起輸入
+  - 提供額外的結構化資訊，不依賴 Embedding
+
+- **為什麼需要資料重置工具？**
+  - 舊的快取資料可能不包含 `Future_Hex_ID` 和 `Num_Moving_Lines`
+  - 舊模型權重與新架構不兼容
+  - 強制重新生成確保資料一致性
+
+#### 架構對比
+
+**升級前（單流）**：
+```
+Input: [數值特徵(4) + 主卦嵌入(8)] → LSTM → Output
+```
+
+**升級後（雙流）**：
+```
+Input: [數值特徵(5) + 主卦嵌入(8) + 變卦嵌入(8)] → LSTM → Output
+```
+
+#### 向後相容性
+
+- ⚠️ **破壞性變更**：舊模型權重（`best_model.pth`）無法直接使用
+- ✅ **資料處理**：`data_processor.py` 會自動從 `Ritual_Sequence` 計算缺失欄位
+- ✅ **錯誤處理**：`backtester.py` 提供清晰的錯誤訊息和重新訓練指引
+
+#### 使用方式
+
+1. **清除舊資料和模型**：
+   ```bash
+   python reset_data.py
+   ```
+
+2. **重新訓練模型**：
+   ```bash
+   python model_lstm.py
+   ```
+   會自動重新生成包含新欄位的資料
+
+3. **執行回測**：
+   ```bash
+   python backtester.py
+   ```
+
+#### 檔案變更清單
+
+- ✅ `market_encoder.py`: 新增 `Future_Hex_ID`, `Num_Moving_Lines` 欄位
+- ✅ `data_processor.py`: 重構為四元組輸出，支援雙流架構
+- ✅ `model_lstm.py`: 實現雙流 Embedding，更新訓練循環
+- ✅ `backtester.py`: 適配三輸入架構，添加架構檢查
+- ✅ `reset_data.py`: 新增資料重置工具
+
+---
+
+## 2026-01-23 | Phase 4 - 特徵工程方法重構
+
+**日期**: 2026-01-23  
+**狀態**: ✅ 完成
+
+### 背景與動機
+
+之前的 Embedding 方法在小型資料集（1500 筆）上失敗，因為：
+- 64 維類別嵌入需要大量資料才能學習
+- 模型損失停在 ~0.693（隨機猜測水平）
+- 資料量不足以學習稀疏的查找表
+
+**戰略轉換**：從 **Representation Learning (Embedding)** 轉向 **Feature Engineering (Hand-crafted Features)**
+
+### 核心變更
+
+#### 1. **`data_processor.py` - 特徵提取重構**
+
+**新增 `extract_iching_features()` 方法**：
+- **輸入**: `ritual_sequence` (str, 例如 "987896")
+- **輸出**: 5 個數值特徵的 numpy 陣列：
+  1. `Yang_Count_Main`: 主卦中陽線數量（7, 9 的數量）
+  2. `Yang_Count_Future`: 未來卦中陽線數量（轉換後的陽線數量）
+  3. `Moving_Lines_Count`: 動爻數量（6, 9 的數量）
+  4. `Energy_Delta`: 能量變化（Yang_Count_Future - Yang_Count_Main）
+  5. `Conflict_Score`: 衝突分數（上卦和下卦和的絕對差值）
+
+**`prepare_data()` 方法重構**：
+- **舊返回**: `(X_num, X_main_hex, X_future_hex, y)` 四元組
+- **新返回**: `(X, y)` 二元組
+  - `X`: 合併特徵陣列 (N, sequence_length, 9)
+    - 數值特徵：Close, Volume, RVOL, Daily_Return（4 個）
+    - 易經特徵：Yang_Count_Main, Yang_Count_Future, Moving_Lines_Count, Energy_Delta, Conflict_Score（5 個）
+  - `y`: 標籤陣列 (N, 1)
+
+**標準化改進**：
+- 所有特徵（數值 + 易經）統一使用 `StandardScaler` 標準化
+- 處理常數特徵（方差 < 1e-8）：跳過標準化，設為 0
+- 添加標準化驗證：打印每個特徵的 Mean, Std, Min, Max
+- 使用科學記數法顯示非常小的誤差值
+- 檢查並處理 NaN/Inf 值
+
+**標籤生成更新**：
+- **舊邏輯**: `Target = (Close[t+1] > Close[t])` - 預測 T+1
+- **新邏輯**: `Target = (Close[t+5] > Close[t])` - 預測 T+5（週趨勢）
+- 正確處理最後 5 行無法生成標籤的情況
+
+**進度輸出增強**：
+- 添加 `sys.stdout.flush()` 確保輸出立即顯示
+- 易經特徵提取：每 1000 筆顯示進度
+- 序列生成：每 1000 個序列顯示進度
+- 所有關鍵步驟都有進度提示
+
+#### 2. **`model_lstm.py` - 移除 Embedding 層**
+
+**`QuantumLSTM` 類別重構**：
+- **移除**: `nn.Embedding` 層（主卦和變卦嵌入）
+- **更新輸入**: 直接接收數值特徵（9 維）
+- **降低容量**: `hidden_dim` 從 64 → 32（防止過擬合）
+- **簡化架構**: 
+  ```
+  舊: [數值特徵(5) + 主卦嵌入(8) + 變卦嵌入(8)] → LSTM(64) → Output
+  新: [數值特徵(4) + 易經特徵(5)] → LSTM(32) → Output
+  ```
+
+**`forward()` 方法簡化**：
+- **舊**: `forward(x_num, x_main, x_future)` - 三個輸入
+- **新**: `forward(x)` - 單一輸入（合併特徵）
+
+**`QuantumTrainer` 更新**：
+- 訓練循環適配單一輸入格式
+- 評估方法適配新架構
+
+#### 3. **`experiment_baseline.py` - 健全性檢查增強**
+
+**健全性檢查改進**：
+- **Epochs**: 100 → 200（確保收斂）
+- **模型容量**: `hidden_dim` 32 → 64（增加學習能力）
+- **學習率**: 0.001 → 0.01（10 倍提高）
+- **梯度裁剪**: 添加 `clip_grad_norm_(max_norm=1.0)` 防止梯度爆炸
+- **標籤檢查**: 確保標籤平衡（不能全為 0 或全為 1）
+- **自適應學習率**: 50 個 epoch 無改善時自動提高學習率
+- **提前停止**: 損失 < 0.001 時提前停止
+- **最佳損失追蹤**: 顯示每個 epoch 的最佳損失
+
+**`PureLSTM` 更新**：
+- 適配新特徵格式（僅使用前 4 個數值特徵）
+- `hidden_dim` 降低到 32
+
+**`run_comparison()` 更新**：
+- 使用新的資料準備方法
+- 為 PureLSTM 創建僅包含數值特徵的資料集
+- 更新預測窗口為 T+5
+
+#### 4. **`QuantumDataset` 簡化**
+
+- **舊**: `(X_num, X_main_hex, X_future_hex, y)` 四元組
+- **新**: `(X, y)` 二元組
+
+### 技術決策
+
+#### 為什麼從 Embedding 轉向特徵工程？
+
+1. **資料量限制**：
+   - 1500 筆資料不足以學習 64 維嵌入空間
+   - Embedding 需要大量樣本才能學習有意義的表示
+
+2. **特徵工程優勢**：
+   - 提供明確的「能量」和「方向」數值
+   - LSTM 可以直接使用這些信號作為線性回歸器
+   - 不需要學習稀疏的查找表
+
+3. **可解釋性**：
+   - 手工特徵比 Embedding 向量更容易解釋
+   - 每個特徵都有明確的語義意義
+
+#### 為什麼預測 T+5 而非 T+1？
+
+1. **易經邏輯**：
+   - 易經更適合預測週期性趨勢而非日內波動
+   - T+5（一週）更符合易經的時間尺度
+
+2. **減少噪音**：
+   - T+1 預測受隨機波動影響大
+   - T+5 預測更能捕捉趨勢
+
+#### 為什麼降低 hidden_dim 到 32？
+
+- 小型資料集容易過擬合
+- 降低模型容量有助於泛化
+- 特徵工程方法不需要大容量模型
+
+### 標準化改進細節
+
+#### 常數特徵處理
+
+```python
+# 檢查方差 < 1e-8 的特徵
+feature_vars = np.var(all_features, axis=0)
+constant_features = [i for i, var in enumerate(feature_vars) if var < 1e-8]
+
+# 只標準化非常數特徵
+non_constant_features = all_features[:, ~constant_mask]
+scaled_features = scaler.fit_transform(non_constant_features)
+
+# 常數特徵設為 0（標準化後 mean=0）
+all_features_scaled[:, constant_features] = 0.0
+```
+
+#### 標準化驗證
+
+- 打印每個特徵的統計信息（Mean, Std, Min, Max）
+- 計算非常數特徵的標準化誤差
+- 使用科學記數法顯示非常小的值（< 1e-6）
+- 顯示常數特徵的索引
+
+### 檔案變更清單
+
+- ✅ `data_processor.py`: 
+  - 新增 `extract_iching_features()` 方法
+  - 重構 `prepare_data()` 返回二元組
+  - 改進標準化處理（常數特徵、NaN 檢查）
+  - 更新標籤生成邏輯（T+5）
+  - 添加進度輸出和 `sys.stdout.flush()`
+  
+- ✅ `model_lstm.py`:
+  - 移除所有 `nn.Embedding` 層
+  - 簡化 `QuantumLSTM` 架構
+  - 降低 `hidden_dim` 到 32
+  - 更新 `forward()` 方法（單一輸入）
+  - 更新訓練和評估循環
+
+- ✅ `experiment_baseline.py`:
+  - 增強健全性檢查（200 epochs, 更高學習率）
+  - 更新 `PureLSTM` 適配新格式
+  - 更新 `run_comparison()` 使用新特徵集
+  - 添加標籤分布檢查
+  - 添加梯度裁剪和自適應學習率
+
+### 預期效果
+
+1. **標準化問題解決**：
+   - 所有特徵統一標準化，解決尺度不一致問題
+   - 常數特徵正確處理，避免 NaN
+
+2. **模型學習能力提升**：
+   - 明確的數值特徵更容易學習
+   - 降低模型容量防止過擬合
+
+3. **健全性檢查通過**：
+   - 更高的學習率和模型容量
+   - 自適應學習率調整
+   - 梯度裁剪防止訓練不穩定
+
+### 使用方式
+
+1. **運行健全性檢查**：
+   ```bash
+   python experiment_baseline.py
+   ```
+   會自動執行健全性檢查和基準比較
+
+2. **查看標準化統計**：
+   程序會自動打印詳細的特徵標準化統計信息
+
+3. **監控訓練進度**：
+   所有關鍵步驟都會顯示進度輸出
+
+### 後續優化方向
+
+1. **特徵工程擴展**：
+   - 可以添加更多易經相關特徵
+   - 例如：卦象的對稱性、動爻的位置等
+
+2. **模型架構調整**：
+   - 如果資料量增加，可以考慮增加模型容量
+   - 可以嘗試不同的 LSTM 層數和 dropout 率
+
+3. **預測時間範圍**：
+   - 可以嘗試不同的預測窗口（T+3, T+7, T+10）
+   - 找到最適合易經邏輯的時間尺度
+
+---
+
+## 2026-01-23 | Phase 3 - Optuna 超參數優化與最佳參數應用
+
+### 步驟：建立超參數優化系統並應用最佳參數
+
+**日期**: 2026-01-23  
+**狀態**: ✅ 完成
+
+#### 設計目標
+
+使用 Optuna 進行貝葉斯優化，尋找 `QuantumLSTM` 模型的最佳超參數組合，並將優化結果整合到配置系統中，用於最終模型驗證。
+
+#### 實作細節
+
+1. **建立 `tune_hyperparameters.py`**
+
+   - **目標函數 (`objective`)**：
+     * 優化目標：最大化高信心 Precision（預測機率 >= 0.65 時的準確率）
+     * 超參數搜索空間：
+       - `sequence_length`: [5, 10, 20, 30]（月週期測試）
+       - `hidden_dim`: [32, 64, 128, 256]
+       - `num_layers`: [1, 2, 3]
+       - `dropout`: [0.1, 0.5]
+       - `learning_rate`: [1e-4, 1e-2]（對數均勻分布）
+     * 訓練設置：
+       - Epochs: 20（固定）
+       - Early Stopping: patience=10, min_delta=0.0001
+       - Gradient Clipping: max_norm=1.0
+       - Learning Rate Scheduler: ReduceLROnPlateau
+     * 評估指標：高信心 Precision（`prob >= 0.65`）
+
+   - **Optuna Study 設置**：
+     * Direction: `maximize`（最大化 Precision）
+     * Pruner: `MedianPruner`（n_startup_trials=5, n_warmup_steps=10）
+     * Trials: 30 次試驗
+     * 進度條顯示：`show_progress_bar=True`
+
+   - **結果保存**：
+     * 最佳參數保存至 `config/best_params.json`
+     * 包含元數據：`best_precision`, `best_trial_number`, `optimization_date`
+     * 自動轉換 numpy 類型為 Python 原生類型
+
+2. **更新 `config.py`**
+
+   - 新增模型超參數配置（來自 Optuna 優化結果）：
+     * `SEQUENCE_LENGTH = 30`（最佳值：月週期）
+     * `HIDDEN_DIM = 256`（最佳值：較大容量）
+     * `NUM_LAYERS = 1`（最佳值：單層）
+     * `DROPOUT = 0.35`（最佳值：適中正則化）
+     * `LEARNING_RATE = 0.001`（最佳值：標準學習率）
+     * `PREDICTION_WINDOW = 5`（T+5 波動性預測）
+
+3. **更新 `experiment_baseline.py`**
+
+   - **健全性檢查 (`run_sanity_check`)**：
+     * 使用 `settings.SEQUENCE_LENGTH` 和 `settings.PREDICTION_WINDOW`
+     * 模型使用最佳參數：`hidden_dim=256`, `num_layers=1`, `dropout=0.35`
+     * 學習率使用 `settings.LEARNING_RATE = 0.001`
+     * 更新打印訊息顯示最佳參數資訊
+
+   - **基準比較 (`run_comparison`)**：
+     * QuantumLSTM 使用最佳超參數：
+       - `hidden_dim=256`
+       - `num_layers=1`
+       - `dropout=0.35`
+     * PureLSTM（Baseline）使用相同參數以確保公平比較
+     * 兩個模型都使用 `sequence_length=30`（月週期）
+     * 更新超參數設定顯示，明確標示使用 Optuna 最佳參數
+
+   - **信心閾值分析**：
+     * 保持原有的 `analyze_confidence_tiers` 功能
+     * 測試閾值：[0.5, 0.55, 0.6, 0.65, 0.7]
+     * 目標：驗證在閾值 0.7 時的 Win Rate 是否超過之前的 52.27%
+
+4. **編碼問題修正**
+
+   - 移除不支援的 Unicode 字元（✓, ≤, ✅）
+   - 改用 ASCII 字符（[OK], <=, [SUCCESS]）
+   - 確保 Windows cp950 編碼環境下正常顯示
+
+#### 技術決策
+
+- **為什麼使用 Optuna 而非網格搜索？**
+  - 貝葉斯優化更高效，能在較少試驗中找到最佳參數
+  - 自動剪枝（pruning）可以提前停止無希望的試驗
+  - 支援對數均勻分布，適合學習率等參數
+
+- **為什麼優化目標是高信心 Precision？**
+  - 實際交易中，高信心預測更有價值
+  - 避免低信心預測造成的噪音
+  - 符合「易經信號稀疏但高品質」的假設
+
+- **為什麼最佳 sequence_length 是 30？**
+  - 30 天約等於一個月，符合易經的週期性邏輯
+  - 更長的序列能捕捉更多市場結構資訊
+  - 月週期與易經的傳統時間尺度一致
+
+- **為什麼最佳 hidden_dim 是 256？**
+  - 較大的隱藏維度能捕捉更複雜的模式
+  - 特徵工程方法提供了明確的信號，需要足夠容量來學習
+  - 配合 dropout=0.35 防止過擬合
+
+#### 優化結果（預期）
+
+根據 Optuna 優化，最佳參數組合為：
+- `sequence_length`: 30
+- `hidden_dim`: 256
+- `num_layers`: 1
+- `dropout`: 0.35
+- `learning_rate`: 0.001
+
+這些參數已整合到 `config.py` 中，供所有實驗使用。
+
+#### 檔案變更清單
+
+- ✅ `tune_hyperparameters.py`: 新建超參數優化腳本
+- ✅ `config.py`: 新增模型超參數配置
+- ✅ `experiment_baseline.py`: 更新為使用最佳參數
+- ✅ `data_processor.py`: 修復編碼問題（移除 Unicode 字元）
+
+#### 使用方式
+
+1. **執行超參數優化**（已完成）：
+   ```bash
+   python tune_hyperparameters.py
+   ```
+   會進行 30 次試驗，找到最佳參數並保存至 `config/best_params.json`
+
+2. **應用最佳參數進行驗證**：
+   ```bash
+   python experiment_baseline.py
+   ```
+   會使用 `config.py` 中的最佳參數進行訓練和比較
+
+3. **查看信心閾值分析**：
+   程序會自動顯示不同信心閾值下的 Win Rate 和 Precision
+
+#### 後續驗證目標
+
+- ✅ 使用最佳參數（sequence_length=30, hidden_dim=256）重新訓練
+- ✅ 驗證在信心閾值 0.7 時的 Win Rate 是否超過 52.27%
+- ✅ 比較 QuantumLSTM（最佳參數）vs PureLSTM（Baseline）
+
+#### 向後相容性
+
+- ✅ 所有配置都通過 `settings` 物件統一管理
+- ✅ 舊代碼仍可使用預設值（如果未更新）
+- ✅ 最佳參數已整合到配置系統，無需手動修改代碼
+
+---
+
+## 2026-01-23 | Phase 4 - 波動率預測模型部署與 Dashboard 整合
+
+### 步驟：建立模型保存腳本並整合波動率雷達到 Dashboard
+
+**日期**: 2026-01-23  
+**狀態**: ✅ 完成
+
+#### 設計目標
+
+將經過驗證的精簡版 XGBoost 模型（Model C）部署到 Streamlit Dashboard，提供實時波動性爆發機率預測，作為「執行決策工具」供用戶使用。
+
+#### 背景與動機
+
+1. **模型驗證完成**：
+   - 經過 `experiment_xgboost.py` 驗證，精簡版模型（Model C）表現最佳
+   - 使用特徵：`Moving_Lines_Count`（負相關 -0.67）和 `Energy_Delta`（正相關 +0.59）
+   - 關鍵洞察：「動爻少且能量增強 = 波動性爆發機率高」（暴風雨前的寧靜）
+
+2. **部署需求**：
+   - 需要將模型保存供 Dashboard 重複使用
+   - 需要實時計算當前卦象的易經特徵
+   - 需要視覺化顯示預測結果和警告級別
+
+#### 實作細節
+
+### 1. 建立 `save_model_c.py`
+
+#### 功能設計
+
+- **目標**：訓練並保存精簡版 XGBoost 模型供 Dashboard 使用
+- **訓練策略**：使用**全部可用資料**（不分訓練/測試集）
+  - 原因：Dashboard 需要最佳性能，且用於預測而非評估
+  - 注意：這意味著無法評估泛化性能，但符合生產環境需求
+
+#### 核心函數
+
+1. **`prepare_tabular_data()`**
+   - 重用 `experiment_xgboost.py` 中的邏輯
+   - 提取易經特徵：`Moving_Lines_Count`, `Energy_Delta`
+   - 合併數值特徵：`Close`, `Volume`, `RVOL`, `Daily_Return`
+   - 計算標籤：`abs(Return_5d) > 0.03`（波動性突破）
+
+2. **`train_and_save_model()`**
+   - 超參數（與 Model C 相同）：
+     * `n_estimators`: 100
+     * `max_depth`: 3（淺樹，防止過擬合）
+     * `learning_rate`: 0.05（低學習率，穩定訓練）
+     * `subsample`: 0.8
+     * `colsample_bytree`: 0.8
+     * `random_state`: 42（確保可重現）
+   - **關鍵步驟**：設置 `model.get_booster().feature_names`
+     * 原因：確保 Dashboard 載入時能正確識別特徵順序
+     * 影響：如果未設置，預測時可能出現特徵順序錯誤
+
+3. **模型保存**
+   - 格式：`xgb.XGBClassifier.save_model("data/volatility_model.json")`
+   - 路徑：`data/volatility_model.json`
+   - 優點：JSON 格式可讀性好，易於調試
+
+#### 技術決策
+
+- **為什麼使用全部資料訓練？**
+  - Dashboard 需要最佳預測性能
+  - 生產環境中，模型會持續更新，不需要保留測試集
+  - 如果未來需要評估，可以從外部資料源獲取新資料
+
+- **為什麼保存為 JSON 而非 pickle？**
+  - JSON 格式更安全（避免惡意代碼注入）
+  - 跨平台相容性更好
+  - 檔案大小較小
+  - XGBoost 原生支援 JSON 格式
+
+- **為什麼需要設置 `feature_names`？**
+  - XGBoost 在保存時可能不保存特徵名稱
+  - Dashboard 載入時需要知道特徵順序
+  - 確保預測時特徵順序與訓練時一致
+
+### 2. 更新 `dashboard.py`
+
+#### 新增功能
+
+1. **導入模組**
+   ```python
+   import xgboost as xgb
+   import numpy as np
+   import os
+   from data_processor import DataProcessor
+   ```
+
+2. **`load_volatility_model()` 函數**
+   - 使用 `@st.cache_resource` 快取
+   - 原因：避免每次頁面重新載入時都重新載入模型（耗時）
+   - 錯誤處理：如果模型檔案不存在，返回 `None` 並顯示友好提示
+
+3. **`render_volatility_radar()` 函數**
+
+   **功能流程**：
+   1. 載入模型（使用快取）
+   2. 提取易經特徵：
+      - 使用 `DataProcessor().extract_iching_features(ritual_seq_str)`
+      - 提取 `Moving_Lines_Count`（索引 2）和 `Energy_Delta`（索引 3）
+   3. 提取數值特徵：
+      - 從 `latest_row`（pandas Series）提取：`Close`, `Volume`, `RVOL`, `Daily_Return`
+      - 錯誤處理：使用 `try-except` 處理缺失欄位
+   4. 組合特徵向量：
+      - 順序必須與訓練時一致：`[Close, Volume, RVOL, Daily_Return, Moving_Lines_Count, Energy_Delta]`
+      - 使用 `np.array().reshape(1, -1)` 轉換為 2D 陣列
+   5. 預測：
+      - `model.predict_proba(feature_vector)[0, 1]` 獲取波動性爆發機率
+      - 轉換為百分比：`prob_percent = prob_breakout * 100`
+   6. 視覺化顯示：
+      - 根據機率顯示警告級別：
+        * 🔴 **極度危險 (Extreme Risk)** - 機率 > 70%
+          - 紅色邊框 + 脈衝動畫效果
+          - CSS 動畫：`@keyframes pulse-danger`
+        * 🟠 **警戒 (Warning)** - 機率 > 50%
+          - 橙色邊框
+        * 🟢 **平穩 (Stable)** - 機率 ≤ 50%
+          - 綠色邊框
+      - 大型機率顯示（3rem 字體）
+      - 進度條視覺化
+      - 解釋性工具提示（Tooltip）
+      - 可展開查看特徵值（用於調試）
+
+#### 整合位置
+
+- **插入點**：在「量化橋接指標列」（Step 4）之後，「AI 易經解讀」（Step 5）之前
+- **原因**：
+  - 量化橋接提供基礎市場指標
+  - 波動率雷達提供 AI 預測結果
+  - AI 解讀提供易經解釋
+  - 形成完整的分析流程：數據 → 預測 → 解釋
+
+#### 技術決策
+
+- **為什麼使用 `@st.cache_resource` 而非 `@st.cache`？**
+  - `@st.cache_resource` 專用於不可序列化的資源（如模型物件）
+  - `@st.cache` 用於可序列化的數據（如 DataFrame）
+  - XGBoost 模型物件不可序列化，必須使用 `cache_resource`
+
+- **為什麼特徵順序必須與訓練時一致？**
+  - XGBoost 使用位置索引而非名稱來識別特徵
+  - 如果順序錯誤，模型會使用錯誤的特徵值進行預測
+  - 解決方案：在訓練時設置 `feature_names`，確保順序一致
+
+- **為什麼需要錯誤處理？**
+  - Dashboard 可能在模型尚未訓練時被訪問
+  - 資料欄位可能缺失（例如某些股票沒有 Volume 資料）
+  - 易經特徵提取可能失敗（無效的 ritual_sequence）
+  - 友好的錯誤提示有助於用戶理解問題
+
+- **為什麼使用 CSS 動畫而非 JavaScript？**
+  - Streamlit 不支援自訂 JavaScript（安全限制）
+  - CSS 動畫可以通過 `st.markdown(unsafe_allow_html=True)` 實現
+  - 脈衝動畫效果可以吸引用戶注意高風險情況
+
+#### 視覺化設計原理
+
+1. **顏色編碼**：
+   - 🔴 紅色：危險（高波動性爆發機率）
+   - 🟠 橙色：警戒（中等機率）
+   - 🟢 綠色：平穩（低機率）
+   - 符合直覺的顏色語義
+
+2. **進度條設計**：
+   - 寬度 = 機率百分比
+   - 顏色 = 警告級別顏色
+   - 提供視覺化的機率大小
+
+3. **工具提示（Tooltip）**：
+   - 解釋 AI 的判斷邏輯
+   - 顯示當前特徵值
+   - 幫助用戶理解預測結果
+
+4. **可展開調試資訊**：
+   - 預設隱藏，避免介面混亂
+   - 開發者可以查看詳細特徵值
+   - 有助於問題診斷
+
+### 檔案變更清單
+
+- ✅ `save_model_c.py`: 新建模型保存腳本
+  - `prepare_tabular_data()`: 準備表格型資料
+  - `train_and_save_model()`: 訓練並保存模型
+  - `main()`: 主執行函數
+
+- ✅ `dashboard.py`: 更新 Dashboard 添加波動率雷達
+  - 新增導入：`xgboost`, `numpy`, `os`, `DataProcessor`
+  - 新增 `load_volatility_model()`: 載入模型（快取）
+  - 新增 `render_volatility_radar()`: 顯示波動率雷達
+  - 整合到主流程：在 Step 4.5 位置調用
+
+### 使用方式
+
+1. **訓練並保存模型**：
+   ```bash
+   python save_model_c.py
+   ```
+   - 會訓練模型並保存至 `data/volatility_model.json`
+   - 顯示模型配置和特徵順序
+
+2. **啟動 Dashboard**：
+   ```bash
+   streamlit run dashboard.py
+   ```
+   - 首次載入時會載入模型（顯示「正在載入波動性模型...」）
+   - 後續訪問使用快取，無需重新載入
+
+3. **使用波動率雷達**：
+   - 輸入股票代號並點擊「Consult the Oracle」
+   - 在「量化橋接指標列」下方會顯示「🌊 波動率爆發機率 (Volatility Radar)」
+   - 根據預測機率顯示對應的警告級別
+
+### 除錯過程記錄
+
+#### 問題 1: 特徵順序不一致
+
+**症狀**：Dashboard 預測結果異常（機率始終為 0 或 1）
+
+**原因**：
+- XGBoost 使用位置索引識別特徵
+- Dashboard 中特徵順序與訓練時不一致
+
+**解決方案**：
+- 在 `save_model_c.py` 中設置 `model.get_booster().feature_names = list(X.columns)`
+- 在 `dashboard.py` 中確保特徵順序與訓練時一致：
+  ```python
+  feature_vector = np.array([
+      numerical_features[0],  # Close
+      numerical_features[1],  # Volume
+      numerical_features[2],  # RVOL
+      numerical_features[3],  # Daily_Return
+      moving_lines_count,     # Moving_Lines_Count
+      energy_delta            # Energy_Delta
+  ]).reshape(1, -1)
+  ```
+
+#### 問題 2: pandas Series 訪問方式
+
+**症狀**：`KeyError` 或 `AttributeError` 當訪問 `latest_row` 欄位時
+
+**原因**：
+- `latest_row` 是 pandas Series，需要使用索引訪問
+- 某些欄位可能不存在（例如某些股票沒有 Volume）
+
+**解決方案**：
+- 使用 `try-except` 處理缺失欄位
+- 使用 `.get()` 方法提供預設值：
+  ```python
+  try:
+      close_val = float(latest_row['Close'])
+      volume_val = float(latest_row.get('Volume', 0))
+      rvol_val = float(latest_row.get('RVOL', 1.0))
+      daily_return_val = float(latest_row.get('Daily_Return', 0))
+  except (KeyError, ValueError) as e:
+      st.warning(f"無法提取數值特徵: {e}")
+      return
+  ```
+
+#### 問題 3: Streamlit 快取機制
+
+**症狀**：每次頁面重新載入時都重新載入模型（耗時）
+
+**原因**：
+- 未使用 Streamlit 快取機制
+- 模型載入是耗時操作（需要讀取檔案和初始化）
+
+**解決方案**：
+- 使用 `@st.cache_resource` 裝飾器：
+  ```python
+  @st.cache_resource(show_spinner="正在載入波動性模型...")
+  def load_volatility_model(model_path: str = "data/volatility_model.json"):
+      ...
+  ```
+- 首次載入時顯示 spinner，後續使用快取
+
+#### 問題 4: CSS 動畫在 Streamlit 中的實現
+
+**症狀**：想要實現脈衝動畫效果，但 Streamlit 不支援自訂 JavaScript
+
+**原因**：
+- Streamlit 基於安全考慮，不允許執行自訂 JavaScript
+- 需要使用純 CSS 實現動畫效果
+
+**解決方案**：
+- 使用 CSS `@keyframes` 定義動畫
+- 通過 `st.markdown(unsafe_allow_html=True)` 注入 CSS
+- 實現脈衝動畫：
+  ```css
+  @keyframes pulse-danger {
+      0%, 100% {
+          box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4);
+      }
+      50% {
+          box-shadow: 0 0 0 8px rgba(220, 38, 38, 0);
+      }
+  }
+  ```
+
+#### 問題 5: 易經特徵提取錯誤處理
+
+**症狀**：當 `ritual_sequence` 無效時，程式崩潰
+
+**原因**：
+- `extract_iching_features()` 可能拋出異常
+- Dashboard 需要優雅地處理錯誤
+
+**解決方案**：
+- 使用 `try-except` 包裹特徵提取過程
+- 顯示友好的錯誤訊息：
+  ```python
+  try:
+      iching_features = processor.extract_iching_features(ritual_seq_str)
+  except Exception as e:
+      st.error(f"計算波動性預測時發生錯誤: {e}")
+      return
+  ```
+
+### 技術原理
+
+#### 為什麼「動爻少且能量增強 = 波動性爆發機率高」？
+
+1. **易經邏輯**：
+   - 動爻少 = 結構相對穩定（本卦）
+   - 能量增強 = 之卦陽爻增加（多方力量增強）
+   - 穩定結構 + 能量累積 = 變盤前兆（暴風雨前的寧靜）
+
+2. **市場邏輯**：
+   - 低波動期（動爻少）= 價格區間整理
+   - 能量累積（Energy_Delta 正）= 買盤或賣盤力量增強
+   - 突破時機 = 波動性爆發
+
+3. **統計驗證**：
+   - `Moving_Lines_Count` 負相關（-0.67）：動爻越少，波動性爆發機率越高
+   - `Energy_Delta` 正相關（+0.59）：能量增加，波動性爆發機率越高
+   - 兩個特徵結合，形成強烈的預測信號
+
+#### 為什麼使用 XGBoost 而非 LSTM？
+
+1. **資料量限制**：
+   - 1500 筆資料不足以訓練複雜的 LSTM
+   - XGBoost 更適合小樣本學習
+
+2. **特徵類型**：
+   - 易經特徵是手工特徵（明確語義）
+   - 不需要學習表示（如 Embedding）
+   - XGBoost 擅長處理表格型資料
+
+3. **可解釋性**：
+   - XGBoost 提供特徵重要性
+   - 可以通過 SHAP 值解釋預測
+   - LSTM 是黑盒模型，難以解釋
+
+4. **訓練效率**：
+   - XGBoost 訓練速度快
+   - 不需要 GPU
+   - 適合實時預測場景
+
+### 後續優化方向
+
+1. **模型更新機制**：
+   - 定期重新訓練模型（例如每週或每月）
+   - 使用最新資料更新模型
+   - 版本控制（保存歷史模型版本）
+
+2. **多市場支援**：
+   - 為不同市場（台股、美股、加密貨幣）訓練不同模型
+   - 市場特性不同，可能需要不同的特徵權重
+
+3. **實時監控**：
+   - 記錄預測結果和實際波動性
+   - 計算預測準確率
+   - 發現模型性能下降時自動重新訓練
+
+4. **用戶反饋**：
+   - 允許用戶標記預測是否準確
+   - 收集用戶反饋用於模型改進
+   - 建立預測準確率儀表板
+
+5. **進階視覺化**：
+   - 顯示歷史預測趨勢圖
+   - 比較不同股票的波動性風險
+   - 提供風險評級建議
+
+### 向後相容性
+
+- ✅ Dashboard 在模型不存在時顯示友好提示
+- ✅ 所有新功能都是可選的（不影響現有功能）
+- ✅ 模型載入失敗不會導致 Dashboard 崩潰
+- ✅ 特徵提取失敗會優雅地處理錯誤
+
+---

@@ -12,10 +12,11 @@
 
 - **資料層 (Phase 1 & 3)**
   - `data_loader.py`：從 Yahoo Finance 下載歷史股價（支援美股 / 台股 / 加密貨幣）。
-  - `market_encoder.py`：將價格與成交量轉成四象（6/7/8/9），再組成六爻卦象。
+  - `market_encoder.py`：將價格與成交量轉成四象（6/7/8/9），再組成六爻卦象，並生成**主卦 ID**、**變卦（之卦）ID** 和**動爻數量**。
   - `iching_core.py`：由「儀式數字序列」解碼出當前卦／未來卦與動爻。
-  - `data_processor.py`：將含卦象的時間序列轉換為 LSTM 可用的訓練資料。
-  - `model_lstm.py` + `backtester.py`：Hybrid LSTM 模型與簡易回測框架。
+  - `data_processor.py`：將含卦象的時間序列轉換為 LSTM 可用的訓練資料（**雙流架構**：主卦 + 變卦 + 動爻數量）。
+  - `model_lstm.py` + `backtester.py`：**雙流 Embedding LSTM** 模型與簡易回測框架。
+  - `reset_data.py`：資料重置工具，清除舊快取並強制重新生成包含新欄位的資料。
 
 - **知識庫與 RAG (Phase 2)**
   - `config.py` + `HEXAGRAM_MAP`：完整 64 卦對照表（ID、英文名、繁中卦名）。
@@ -249,8 +250,9 @@ sequenceDiagram
 - `vector_store.py`：Chroma 向量資料庫（語義檢索易經文本）。
 - `oracle_chat.py`：Quantum I-Ching 神諭（整合市場資料、卦象、RAG、Gemini），實作之卦策略與貞／悔架構，並支援 Dashboard 傳入單一市場狀態（precomputed_data）避免重複算卦。
 - `dashboard.py`：Streamlit 前端儀表板（台股優先、K 線＋卦象＋解讀；本卦／之卦與卜卦解讀共用同一份 current_market_state）。
-- `model_lstm.py`：LSTM 模型與訓練流程。
+- `model_lstm.py`：LSTM 模型與訓練流程（**雙流 Embedding 架構**）。
 - `backtester.py`：策略回測引擎。
+- `reset_data.py`：資料重置工具（清除舊快取，強制重新生成資料）。
 - `DEV_LOG.md`：完整開發日誌與除錯紀錄（推薦先閱讀）。
 
 ---
@@ -282,6 +284,76 @@ sequenceDiagram
 
 ---
 
-若要了解所有細部設計決策（含 yfinance 相容性、Windows 編碼問題、Gemini 模型選擇、Streamlit UI 除錯歷程、之卦策略實作、open-iching 資料來源等），請參考 `DEV_LOG.md`。  
+---
+
+## 機器學習架構：雙流 Embedding LSTM
+
+### 架構概述
+
+本專案使用 **雙流 Embedding LSTM** 架構，結合：
+1. **主卦（本卦）Embedding**：代表當前市場狀態
+2. **變卦（之卦）Embedding**：代表未來變動方向
+3. **數值特徵**：技術指標（Close, Volume, RVOL, Daily_Return） + **動爻數量**（Num_Moving_Lines，0-6）
+
+### 架構設計
+
+```
+輸入層：
+  - 數值特徵 (5 維): [Close, Volume, RVOL, Daily_Return, Num_Moving_Lines]
+  - 主卦 ID (0-63) → Embedding (8 維)
+  - 變卦 ID (0-63) → Embedding (8 維)
+
+特徵融合：
+  [數值特徵(5) + 主卦嵌入(8) + 變卦嵌入(8)] → 總計 21 維
+
+LSTM 層：
+  - 2 層 LSTM，隱藏維度 64
+  - Dropout 0.2
+
+輸出層：
+  - 全連接層 → Sigmoid → 二分類機率（上漲/下跌）
+```
+
+### 關鍵設計決策
+
+- **雙流 Embedding（不平均）**：
+  - 主卦和變卦的嵌入**拼接**而非平均
+  - 保留「當前 vs. 未來」的對比結構資訊
+  - 符合易經「本卦 → 之卦」的變動邏輯
+
+- **動爻數量作為數值特徵**：
+  - 動爻數量（0-6）代表市場「能量」或「波動性」
+  - 作為連續變數標準化，與其他技術指標一起輸入
+  - 提供額外的結構化資訊
+
+### 資料流程
+
+1. **資料生成** (`market_encoder.py`)：
+   - 從市場資料生成 `Ritual_Sequence`（儀式數字序列）
+   - 計算主卦 `Hexagram_Binary` → `Main_Hex_ID`
+   - 計算變卦 `Future_Binary` → `Future_Hex_ID`
+   - 統計動爻數量 `Num_Moving_Lines`（6 和 9 的數量）
+
+2. **資料處理** (`data_processor.py`)：
+   - 提取數值特徵（包含 `Num_Moving_Lines`）
+   - 標準化數值特徵
+   - 生成時間序列（滑動窗口，預設 10 天）
+   - 返回四元組：`(X_num, X_main_hex, X_future_hex, y)`
+
+3. **模型訓練** (`model_lstm.py`)：
+   - 雙流 Embedding 層分別處理主卦和變卦
+   - LSTM 學習時間序列模式
+   - 二分類輸出（上漲/下跌機率）
+
+### 模型升級注意事項
+
+⚠️ **破壞性變更**：舊模型權重（`data/best_model.pth`）與新架構不兼容。
+
+**升級步驟**：
+1. 執行 `python reset_data.py` 清除舊快取和模型
+2. 執行 `python model_lstm.py` 重新訓練模型
+3. 執行 `python backtester.py` 進行回測
+
+---  
 未來如要擴充新的前端（例如 FastAPI / React），建議沿用 `Oracle` 作為單一後端入口。 
 
