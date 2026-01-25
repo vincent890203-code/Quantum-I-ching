@@ -56,9 +56,10 @@ desktop.ini
 data/*.pth
 data/*.pt
 data/*.pkl
-data/volatility_model.json
 data/best_model.pth
 # 注意：data/iching_book.json 和 data/iching_complete.json 是源數據，應該保留
+# 注意：data/volatility_model.json 需要上傳到 GitHub 供 Streamlit Cloud 使用
+# data/volatility_model.json  # 已註解，允許上傳
 
 # 向量資料庫（ChromaDB）
 data/chroma_db/

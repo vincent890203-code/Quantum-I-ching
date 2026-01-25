@@ -385,17 +385,89 @@ def _split_markdown_sections(text: str) -> list[tuple[str, str]]:
     return [(t, "\n".join(b).strip()) for t, b in sections]
 
 
+def plot_volatility_gauge(probability: float) -> go.Figure:
+    """創建簡約風格的波動率 Gauge Chart.
+    
+    Args:
+        probability: 波動性爆發機率（0-100）。
+    
+    Returns:
+        Plotly Figure 物件。
+    """
+    # 決定顏色區域（0-50% 綠色，50-100% 紅色）
+    if probability < 50:
+        arc_color = "#2ECC71"  # Emerald Green - Stable
+        status_label = "Stable"
+    else:
+        arc_color = "#E74C3C"  # Alizarin Red - Risk
+        status_label = "Risk"
+    
+    # 創建簡約的 Gauge Chart
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=probability,
+        domain={'x': [0, 1], 'y': [0, 1]},
+        title={
+            'text': f"<b>{status_label}</b>",
+            'font': {'size': 16, 'family': "Arial, sans-serif", 'color': "#333333"}
+        },
+        number={
+            'font': {'size': 56, 'color': "#000000", 'family': "Arial, sans-serif", 'weight': 'bold'},
+            'suffix': '%',
+            'valueformat': '.1f'
+        },
+        gauge={
+            'axis': {
+                'range': [None, 100],
+                'tickwidth': 1,
+                'tickcolor': "#666666",
+                'tickmode': 'linear',
+                'tick0': 0,
+                'dtick': 25,
+                'tickfont': {'size': 11, 'color': "#666666", 'family': "Arial, sans-serif"},
+                'ticklen': 8,
+                'ticklabelstep': 1
+            },
+            'bar': {'color': "#000000", 'thickness': 0.08},  # 黑色指針，細線
+            'bgcolor': "white",
+            'borderwidth': 0,
+            'bordercolor': "white",  # 使用白色替代 transparent
+            'steps': [
+                {'range': [0, 50], 'color': "#2ECC71", 'thickness': 0.03},  # 細綠色弧線
+                {'range': [50, 100], 'color': "#E74C3C", 'thickness': 0.03}  # 細紅色弧線
+            ],
+            'threshold': {
+                'line': {'color': "#000000", 'width': 2},
+                'thickness': 0.75,
+                'value': 100
+            }
+        }
+    ))
+    
+    # 更新佈局（簡約風格）
+    fig.update_layout(
+        height=300,
+        margin=dict(l=40, r=40, t=60, b=40),
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        font={'color': "#000000", 'family': "Arial, sans-serif"}
+    )
+    
+    return fig
+
+
 def _render_quantitative_bridge(
     raw_df: pd.DataFrame,
     ritual_sequence: list[int],
     moving_lines: list[int],
+    latest_row: pd.Series | None = None,
 ) -> None:
     """在圖表與文字解讀之間插入「量化橋接」指標列.
 
     - 價格：當日收盤與昨日比較
     - RVOL：當日量 / 20 日平均量
     - 系統狀態：依動爻數量評估穩定度
-    - 趨勢強度：Price vs MA20 粗略判斷多空
+    - 趨勢強度：基於 Energy_Delta 或 RVOL
     """
     if raw_df is None or raw_df.empty:
         return
@@ -420,40 +492,91 @@ def _render_quantitative_bridge(
         avg_vol_20 = 0.0
         rvol = 1.0
 
-    # 系統狀態：依動爻數量判斷
+    # 系統狀態：依動爻數量判斷（使用 Moving_Lines_Count）
     moving_count = len(moving_lines)
     if moving_count == 0:
-        system_state = "Stable"
-        system_desc = "0 動爻：結構相對穩定"
+        system_state = "🔒 Locked"
+        system_desc = "Energy Squeeze"
     elif moving_count <= 2:
-        system_state = "Active"
-        system_desc = f"{moving_count} 動爻：結構開始活躍"
+        system_state = "🌊 Flowing"
+        system_desc = f"{moving_count} moving lines"
     else:
-        system_state = "Volatile"
-        system_desc = f"{moving_count} 動爻：結構高度波動"
+        system_state = "🔥 Chaotic"
+        system_desc = f"{moving_count} moving lines"
 
-    # 趨勢強度：以 Price > MA20 粗略判斷
-    ma20 = float(raw_df["Close"].tail(20).mean()) if len(raw_df) >= 20 else latest_close
-    if latest_close >= ma20:
-        trend_label = "Bullish"
-        trend_desc = "價格高於 20 日均線"
+    # 趨勢強度：基於 Energy_Delta 或 RVOL
+    # 優先使用 Energy_Delta（如果 latest_row 可用）
+    if latest_row is not None:
+        try:
+            # 嘗試從 latest_row 提取 Energy_Delta
+            processor = DataProcessor()
+            ritual_seq_str = "".join(str(n) for n in ritual_sequence)
+            iching_features = processor.extract_iching_features(ritual_seq_str)
+            energy_delta = iching_features[3]  # Energy_Delta
+            
+            if energy_delta > 0:
+                trend_label = "Bullish"
+                trend_desc = f"Energy +{energy_delta:.1f}"
+            elif energy_delta < 0:
+                trend_label = "Bearish"
+                trend_desc = f"Energy {energy_delta:.1f}"
+            else:
+                trend_label = "Neutral"
+                trend_desc = "Energy balanced"
+        except Exception:
+            # Fallback: 使用 RVOL
+            if rvol > 1.5:
+                trend_label = "Bullish"
+                trend_desc = f"High volume (RVOL {rvol:.2f}x)"
+            elif rvol < 0.8:
+                trend_label = "Bearish"
+                trend_desc = f"Low volume (RVOL {rvol:.2f}x)"
+            else:
+                trend_label = "Neutral"
+                trend_desc = f"Normal volume (RVOL {rvol:.2f}x)"
     else:
-        trend_label = "Bearish"
-        trend_desc = "價格低於 20 日均線"
+        # Fallback: 使用 RVOL
+        if rvol > 1.5:
+            trend_label = "Bullish"
+            trend_desc = f"High volume (RVOL {rvol:.2f}x)"
+        elif rvol < 0.8:
+            trend_label = "Bearish"
+            trend_desc = f"Low volume (RVOL {rvol:.2f}x)"
+        else:
+            trend_label = "Neutral"
+            trend_desc = f"Normal volume (RVOL {rvol:.2f}x)"
 
+    # Top Row: Key Metrics
     st.markdown("### 📊 量化橋接 (Quantitative Bridge)")
-    col_p, col_rvol, col_state, col_trend = st.columns(4)
+    col_close, col_vol, col_rvol = st.columns(3)
 
-    # 價格指標
-    with col_p:
+    # 收盤價指標
+    with col_close:
         delta_str = f"{price_delta:+.2f} ({price_delta_pct:+.2f}%)"
         st.metric(
             label="收盤價 (Close Price)",
             value=f"{latest_close:,.2f}",
             delta=delta_str,
             delta_color="normal" if price_delta >= 0 else "inverse",
-            help="目前的收盤價。括號內為與前一日的漲跌幅。",
+            help="當日股票交易結束時的最後一筆成交價格。",
         )
+
+    # 成交量指標
+    with col_vol:
+        if volume_available:
+            st.metric(
+                label="成交量 (Volume)",
+                value=f"{current_vol:,.0f}",
+                delta=f"20日均量: {avg_vol_20:,.0f}",
+                help="當日該股票交易的總股數。反映市場的活躍程度。",
+            )
+        else:
+            st.metric(
+                label="成交量 (Volume)",
+                value="N/A",
+                delta="資料不足",
+                help="當日該股票交易的總股數。反映市場的活躍程度。",
+            )
 
     # RVOL 指標
     with col_rvol:
@@ -464,15 +587,18 @@ def _render_quantitative_bridge(
                 value=rvol_str,
                 delta="高於 20 日均量" if rvol > 1 else "低於 / 接近 20 日均量",
                 delta_color="inverse" if rvol > 1.5 else "normal",
-                help="相對成交量 (Relative Volume)。\n計算方式：今日成交量 / 過去 20 日平均成交量。\n數值 > 1.0 代表爆量，易經中常對應『變爻』的產生。",
+                help="Relative Volume。當日成交量與過去一段時間平均成交量的比值。RVOL > 1 代表今日成交量放大。計算方式：今日成交量 / 過去 20 日平均成交量。",
             )
         else:
             st.metric(
                 label="RVOL (相對成交量)",
                 value="N/A",
                 delta="資料不足",
-                help="相對成交量 (Relative Volume)。\n計算方式：今日成交量 / 過去 20 日平均成交量。\n數值 > 1.0 代表爆量，易經中常對應『變爻』的產生。",
+                help="Relative Volume。當日成交量與過去一段時間平均成交量的比值。RVOL > 1 代表今日成交量放大。計算方式：今日成交量 / 過去 20 日平均成交量。",
             )
+
+    # Middle Row: System State & Trend Strength
+    col_state, col_trend = st.columns(2)
 
     # 系統狀態
     with col_state:
@@ -480,19 +606,17 @@ def _render_quantitative_bridge(
             label="系統狀態 (System State)",
             value=system_state,
             delta=system_desc,
-            help="對應易經的『動爻』數量。\n- Stable (0 動爻): 局勢穩定，看本卦。\n- Active (1-2 動爻): 趨勢醞釀中，關注變爻。\n- Volatile (3+ 動爻): 局勢混亂，變盤機率高，參考之卦。",
+            help="對應易經的『動爻』數量。動爻越多，代表市場內部能量越不穩定，變盤機率越高。0 動爻：能量擠壓，結構穩定。1-2 動爻：能量流動，趨勢醞釀。3+ 動爻：能量混亂，變盤機率高。",
         )
 
     # 趨勢強度
     with col_trend:
-        # 加上 🐂/🐻 圖示
-        trend_display = f"{trend_label} {'🐂' if trend_label == 'Bullish' else '🐻'}"
         st.metric(
             label="趨勢強度 (Trend Strength)",
-            value=trend_display,
+            value=trend_label,
             delta=trend_desc,
-            delta_color="normal" if trend_label == "Bullish" else "inverse",
-            help="基於股價與 20 日均線 (月線) 的乖離判斷。\n- 牛市 🐂: 股價在均線之上，支撐強。\n- 熊市 🐻: 股價在均線之下，壓力大。",
+            delta_color="normal" if trend_label == "Bullish" else ("inverse" if trend_label == "Bearish" else "off"),
+            help="基於能量變化（Energy_Delta）或相對成交量（RVOL）判斷。正值表示能量增強，負值表示能量減弱。",
         )
 
 
@@ -652,14 +776,14 @@ def render_ai_response(ai_answer: str) -> None:
     )
 
 
-def render_volatility_radar(
+def render_volatility_gauge(
     raw_df: pd.DataFrame,
     ritual_sequence: list[int],
     latest_row: pd.Series
 ) -> None:
-    """顯示波動率雷達（Volatility Radar）.
+    """顯示波動率 Gauge Chart（簡約風格）.
     
-    使用精簡版 XGBoost 模型預測波動性爆發機率。
+    使用精簡版 XGBoost 模型預測波動性爆發機率，並以簡約的 Gauge Chart 視覺化。
     
     Args:
         raw_df: 原始市場資料 DataFrame。
@@ -679,7 +803,6 @@ def render_volatility_radar(
         iching_features = processor.extract_iching_features(ritual_seq_str)
         
         # 提取數值特徵（從最新一筆資料）
-        # latest_row 是 pandas Series，可以直接使用索引訪問
         try:
             close_val = float(latest_row['Close'])
             volume_val = float(latest_row.get('Volume', 0))
@@ -689,23 +812,16 @@ def render_volatility_radar(
             st.warning(f"無法提取數值特徵: {e}")
             return
         
-        numerical_features = np.array([
-            close_val,
-            volume_val,
-            rvol_val,
-            daily_return_val
-        ])
-        
         # 只使用精簡特徵：Moving_Lines_Count 和 Energy_Delta
         moving_lines_count = iching_features[2]  # Moving_Lines_Count
         energy_delta = iching_features[3]  # Energy_Delta
         
         # 組合特徵向量（順序必須與訓練時一致）
         feature_vector = np.array([
-            numerical_features[0],  # Close
-            numerical_features[1],  # Volume
-            numerical_features[2],  # RVOL
-            numerical_features[3],  # Daily_Return
+            close_val,              # Close
+            volume_val,             # Volume
+            rvol_val,               # RVOL
+            daily_return_val,       # Daily_Return
             moving_lines_count,     # Moving_Lines_Count
             energy_delta            # Energy_Delta
         ]).reshape(1, -1)
@@ -714,102 +830,66 @@ def render_volatility_radar(
         prob_breakout = model.predict_proba(feature_vector)[0, 1]
         prob_percent = prob_breakout * 100
         
-        # 顯示波動率雷達
-        st.markdown("### 🌊 波動率爆發機率 (Volatility Radar)")
+        # 顯示標題（使用原生 help 參數）
+        st.subheader("波動率爆發機率 (Volatility Probability)", help="基於易經動爻與能量差計算的波動率擠壓指標。使用 XGBoost Model C 預測未來 5 天內波動性爆發（|Return_5d| > 3%）的機率。")
         
-        # 根據機率決定警告級別
-        if prob_percent > 70:
-            status_emoji = "🔴"
-            status_text = "極度危險 (Extreme Risk)"
-            status_color = "#dc2626"  # 紅色
-            pulse_style = "animation: pulse-danger 2s ease-in-out infinite;"
-        elif prob_percent > 50:
-            status_emoji = "🟠"
-            status_text = "警戒 (Warning)"
-            status_color = "#f59e0b"  # 橙色
-            pulse_style = ""
-        else:
-            status_emoji = "🟢"
-            status_text = "平穩 (Stable)"
-            status_color = "#10b981"  # 綠色
-            pulse_style = ""
+        # 使用新的簡約 Gauge Chart 函數
+        fig = plot_volatility_gauge(prob_percent)
         
-        # 添加 CSS 動畫（如果需要）
-        if pulse_style:
-            st.markdown(
-                f"""
-                <style>
-                @keyframes pulse-danger {{
-                    0%, 100% {{
-                        box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4);
-                    }}
-                    50% {{
-                        box-shadow: 0 0 0 8px rgba(220, 38, 38, 0);
-                    }}
-                }}
-                .volatility-radar-container {{
-                    {pulse_style}
-                }}
-                </style>
-                """,
-                unsafe_allow_html=True
-            )
+        # 顯示 Gauge Chart
+        st.plotly_chart(fig, use_container_width=True)
         
-        # 顯示機率儀表
-        st.markdown(
-            f"""
-            <div class="volatility-radar-container" style="background-color: #ffffff; border-radius: 12px; padding: 20px; border: 2px solid {status_color}; margin-bottom: 12px;">
-                <div style="text-align: center; margin-bottom: 16px;">
-                    <div style="font-size: 3rem; font-weight: 700; color: {status_color}; margin-bottom: 8px;">
-                        {prob_percent:.1f}%
-                    </div>
-                    <div style="font-size: 1.2rem; font-weight: 600; color: #374151;">
-                        {status_emoji} {status_text}
-                    </div>
-                </div>
-                <div style="background-color: #f0f2f6; border-radius: 10px; padding: 3px; margin-bottom: 12px;">
-                    <div style="width: {prob_percent}%; background-color: {status_color}; height: 28px; border-radius: 8px; transition: width 0.5s ease-in-out; display: flex; align-items: center; justify-content: flex-end; padding-right: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                        <span style="color: white; font-weight: 600; font-size: 0.9rem;">{prob_percent:.1f}%</span>
-                    </div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
+        # 顯示簡潔的解釋性資訊
+        st.caption(
+            f"動爻數量: {int(moving_lines_count)} | 能量變化: {energy_delta:.2f} | 預測機率: {prob_percent:.1f}%"
         )
         
-        # 顯示解釋性資訊
-        tooltip_text = (
-            "AI 偵測到「暴風雨前的寧靜」。"
-            "當動爻少（Moving_Lines_Count 低）且能量增強（Energy_Delta 高）時，變盤機率大增。"
-            "\n\n"
-            f"當前狀態：\n"
-            f"- 動爻數量: {int(moving_lines_count)}\n"
-            f"- 能量變化: {energy_delta:.2f}\n"
-            f"- 預測機率: {prob_percent:.1f}%"
-        )
-        
-        st.markdown(
-            f"""
-            <div style="background-color: #f9fafb; border-radius: 8px; padding: 12px; border-left: 4px solid {status_color};">
-                <p style="font-size: 0.9rem; color: #374151; margin: 0;" title="{tooltip_text}">
-                    <strong>📊 解釋：</strong> {tooltip_text.split('\\n\\n')[0]}
-                    <span style="font-size: 0.75rem; color: #6b7280; margin-left: 4px;">(懸停查看詳細資訊)</span>
-                </p>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-        
-        # 顯示特徵值（用於調試）
+        # 顯示特徵值（用於調試，可選）
         with st.expander("🔍 查看特徵值（用於調試）", expanded=False):
             st.markdown(f"**數值特徵：**")
-            st.markdown(f"- Close: {numerical_features[0]:.2f}")
-            st.markdown(f"- Volume: {numerical_features[1]:,.0f}")
-            st.markdown(f"- RVOL: {numerical_features[2]:.2f}")
-            st.markdown(f"- Daily_Return: {numerical_features[3]:.4f}")
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                st.text("Close:")
+            with col2:
+                st.text(f"{close_val:.2f}")
+            st.caption("當日股票交易結束時的最後一筆成交價格。")
+            
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                st.text("Volume:")
+            with col2:
+                st.text(f"{volume_val:,.0f}")
+            st.caption("當日該股票交易的總股數。反映市場的活躍程度。")
+            
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                st.text("RVOL:")
+            with col2:
+                st.text(f"{rvol_val:.2f}")
+            st.caption("Relative Volume。當日成交量與過去一段時間平均成交量的比值。RVOL > 1 代表今日成交量放大。")
+            
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                st.text("Daily Return:")
+            with col2:
+                st.text(f"{daily_return_val:.4f}")
+            st.caption("今日收盤價與昨日收盤價的變化百分比。計算公式：(今收 - 昨收) / 昨收 * 100%。")
+            
             st.markdown(f"**易經特徵：**")
-            st.markdown(f"- Moving_Lines_Count: {moving_lines_count:.0f}")
-            st.markdown(f"- Energy_Delta: {energy_delta:.2f}")
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                st.text("Moving_Lines_Count:")
+            with col2:
+                st.text(f"{moving_lines_count:.0f}")
+            st.caption("易經卦象中發生變化的爻的數量。動爻越多，代表市場內部能量越不穩定，變盤機率越高。")
+            
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                st.text("Energy_Delta:")
+            with col2:
+                st.text(f"{energy_delta:.2f}")
+            st.caption("能量變化指標。計算方式：未來卦陽爻數量 - 主卦陽爻數量。正值表示能量增強，負值表示能量減弱。")
+            
             st.markdown(f"**預測結果：**")
             st.markdown(f"- 波動性爆發機率: {prob_percent:.2f}%")
             
@@ -1272,10 +1352,11 @@ def main() -> None:
                 raw_df=raw_df,
                 ritual_sequence=ritual_sequence,
                 moving_lines=moving_lines_for_state,
+                latest_row=latest_row,
             )
 
-            # ===== Step 4.5: 波動率雷達（Volatility Radar） =====
-            render_volatility_radar(
+            # ===== Step 4.5: 波動率 Gauge Chart（簡約風格） =====
+            render_volatility_gauge(
                 raw_df=raw_df,
                 ritual_sequence=ritual_sequence,
                 latest_row=latest_row
