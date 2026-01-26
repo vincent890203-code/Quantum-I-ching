@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>詳細資料流程圖
+
+### 主要流程：使用者查詢 → Oracle 解讀</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .mermaid {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>詳細資料流程圖
+
+### 主要流程：使用者查詢 → Oracle 解讀</h1>
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant U as 👤 使用者
+    participant D as 📱 Dashboard
+    participant DL as 📊 MarketDataLoader
+    participant ME as 🔢 MarketEncoder
+    participant IC as 🔢 IChingCore
+    participant O as 🔮 Oracle
+    participant VS as 📚 VectorStore
+    participant J as 📄 iching_complete.json
+    participant G as 🤖 Gemini API
+
+    U->>D: 輸入股票代號/問題
+    D->>DL: fetch_data(ticker, market_type)
+    DL->>DL: 格式化 ticker<br/>(例如 2330 → 2330.TW)
+    DL-->>D: raw_df (OHLCV)
+    
+    D->>ME: generate_hexagrams(raw_df)
+    ME->>ME: 計算技術指標<br/>(RVOL, RVOL_Percentile)
+    ME->>ME: 大衍之數映射<br/>(RVOL → 6/7/8/9)
+    ME->>ME: 滾動窗口(6天)<br/>→ Ritual_Sequence
+    ME->>IC: 計算本卦/之卦
+    IC-->>ME: 本卦/之卦資訊
+    ME-->>D: encoded_df<br/>(含 Ritual_Sequence)
+    
+    D->>IC: interpret_sequence(ritual_sequence)
+    IC-->>D: current_hex, future_hex, moving_lines
+    
+    D->>D: 組成 current_market_state
+    D->>D: 畫 K 線圖、卦象視覺化
+    
+    D->>O: ask(ticker, question,<br/>precomputed_data)
+    O->>O: _resolve_strategy<br/>(依動爻數量決定策略)
+    O->>J: 依 hex_id + line_number<br/>抽取經文
+    J-->>O: 本卦＋之卦＋動爻原文
+    
+    O->>O: 建立系統提示<br/>(含貞/悔框架)
+    O->>G: generate_content(system_prompt)
+    G-->>O: 結構化回答 (Markdown)
+    
+    O-->>D: 卜卦解讀
+    D-->>U: 顯示結果<br/>(K線圖 + 卦象 + 解讀)
+
+    </div>
+    <script>
+        mermaid.initialize({ startOnLoad: true, theme: 'default' });
+    </script>
+</body>
+</html>

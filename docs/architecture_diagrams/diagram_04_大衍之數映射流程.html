@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>大衍之數映射流程</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .mermaid {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>大衍之數映射流程</h1>
+    <div class="mermaid">
+flowchart LR
+    Start([市場資料<br/>OHLCV]) --> Calc[計算技術指標]
+    Calc --> RVOL[RVOL = Volume / Volume_MA20]
+    RVOL --> Percentile[RVOL_Percentile<br/>滾動窗口百分位數]
+    
+    Percentile --> Map{大衍之數映射}
+    
+    Map -->|0-6.25%| Y6[6 老陰<br/>極低能量]
+    Map -->|6.25-50%| Y8[8 少陰<br/>低-中能量]
+    Map -->|50-81.25%| Y7[7 少陽<br/>中-高能量]
+    Map -->|81.25-100%| Y9[9 老陽<br/>極高能量]
+    
+    Y6 --> Window[滾動窗口<br/>6天]
+    Y8 --> Window
+    Y7 --> Window
+    Y9 --> Window
+    
+    Window --> Sequence[Ritual_Sequence<br/>例如: 987896]
+    Sequence --> Binary[Hexagram_Binary<br/>例如: 101010]
+    Binary --> Hexagram[查詢 HEXAGRAM_MAP<br/>取得本卦]
+    
+    style Y6 fill:#ffebee
+    style Y8 fill:#fff3e0
+    style Y7 fill:#e8f5e9
+    style Y9 fill:#e1f5fe
+
+    </div>
+    <script>
+        mermaid.initialize({ startOnLoad: true, theme: 'default' });
+    </script>
+</body>
+</html>

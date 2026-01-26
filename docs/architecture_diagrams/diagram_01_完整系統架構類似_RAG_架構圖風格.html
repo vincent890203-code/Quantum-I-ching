@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>完整系統架構（類似 RAG 架構圖風格）</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .mermaid {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>完整系統架構（類似 RAG 架構圖風格）</h1>
+    <div class="mermaid">
+flowchart TB
+    subgraph DataLayer["📊 資料獲取層 (Data Acquisition Layer)"]
+        direction TB
+        Yahoo["Yahoo Finance API<br/>(外部資料來源)"]
+        Loader["MarketDataLoader<br/>(data_loader.py)<br/>• 支援 TW/US/CRYPTO<br/>• 自動格式化 ticker<br/>• 下載 OHLCV 資料"]
+        Config["Settings & HEXAGRAM_MAP<br/>(config.py)<br/>• 全域設定<br/>• 64卦對照表"]
+        
+        Yahoo --> Loader
+        Config --> Loader
+    end
+
+    subgraph EncodingLayer["🔢 卦象編碼層 (Hexagram Encoding Layer)"]
+        direction TB
+        Encoder["MarketEncoder<br/>(market_encoder.py)<br/>• 計算技術指標<br/>• RVOL 百分位數<br/>• 大衍之數映射<br/>• 四象(6/7/8/9) → 六爻"]
+        Core["IChingCore<br/>(iching_core.py)<br/>• 本卦解碼<br/>• 之卦計算<br/>• 動爻識別"]
+        HexMap["HEXAGRAM_MAP<br/>(64卦對照表)"]
+        
+        Encoder --> Core
+        Core --> HexMap
+    end
+
+    subgraph KnowledgeLayer["📚 知識檢索層 (Knowledge Retrieval Layer)"]
+        direction TB
+        Setup["setup_iching_db.py<br/>• 下載易經資料<br/>• 轉換統一格式"]
+        Convert["convert_iching_s2t.py<br/>• 簡體轉繁體"]
+        JSON["iching_complete.json<br/>(64卦完整資料)"]
+        KLoader["IChingKnowledgeLoader<br/>(knowledge_loader.py)<br/>• JSON → 文件物件<br/>• 主卦 + 六爻<br/>• 約450份文件"]
+        VectorDB["IChingVectorStore<br/>(vector_store.py)<br/>• ChromaDB<br/>• SentenceTransformers<br/>• 語義搜尋 + 嚴格過濾"]
+        
+        Setup --> JSON
+        Convert --> JSON
+        JSON --> KLoader
+        KLoader --> VectorDB
+        Convert --> VectorDB
+    end
+
+    subgraph AppLayer["📱 應用層 (Application Layer)"]
+        direction TB
+        Dashboard["Streamlit Dashboard<br/>(dashboard.py)<br/>• K線圖視覺化<br/>• 卦象卡片<br/>• 量化橋接指標<br/>• Oracle 解讀顯示"]
+        Oracle["Oracle 類別<br/>(oracle_chat.py)<br/>• 之卦策略解析<br/>• 貞/悔架構<br/>• 易經文本檢索<br/>• Gemini API 整合"]
+        CLI["CLI 工具<br/>(main.py)<br/>• 命令列介面<br/>• ASCII 藝術卦象"]
+        Gemini["Google Gemini API<br/>(外部 LLM)<br/>• gemini-2.5-flash<br/>• 結構化輸出"]
+        
+        Dashboard --> Oracle
+        CLI --> Encoder
+        Oracle --> Gemini
+    end
+
+    subgraph MLLayer["🤖 機器學習層 (ML Layer) - 可選"]
+        direction TB
+        Processor["DataProcessor<br/>(data_processor.py)<br/>• 準備 LSTM 資料<br/>• 雙流 Embedding<br/>• 數值特徵標準化"]
+        LSTM["QuantumLSTM<br/>(model_lstm.py)<br/>• 雙流 Embedding<br/>• 2層 LSTM<br/>• 二分類輸出"]
+        Backtest["QuantumBacktester<br/>(backtester.py)<br/>• 策略回測<br/>• 績效評估"]
+        
+        Processor --> LSTM
+        LSTM --> Backtest
+    end
+
+    %% 資料流程
+    Loader --> Encoder
+    Encoder --> Core
+    Core --> Dashboard
+    Core --> Oracle
+    Core --> Processor
+    
+    Oracle --> VectorDB
+    VectorDB --> JSON
+    
+    Processor --> LSTM
+
+    %% 樣式
+    classDef dataLayer fill:#e8f5e9,stroke:#2e7d32,stroke-width:3px,color:#000
+    classDef encodingLayer fill:#fff3e0,stroke:#f57c00,stroke-width:3px,color:#000
+    classDef knowledgeLayer fill:#f3e5f5,stroke:#7b1fa2,stroke-width:3px,color:#000
+    classDef appLayer fill:#e1f5fe,stroke:#0277bd,stroke-width:3px,color:#000
+    classDef mlLayer fill:#fce4ec,stroke:#c2185b,stroke-width:3px,color:#000
+    classDef external fill:#fff9c4,stroke:#f9a825,stroke-width:3px,color:#000
+
+    class Yahoo,Loader,Config dataLayer
+    class Encoder,Core,HexMap encodingLayer
+    class Setup,Convert,JSON,KLoader,VectorDB knowledgeLayer
+    class Dashboard,Oracle,CLI appLayer
+    class Processor,LSTM,Backtest mlLayer
+    class Gemini external
+
+    </div>
+    <script>
+        mermaid.initialize({ startOnLoad: true, theme: 'default' });
+    </script>
+</body>
+</html>
