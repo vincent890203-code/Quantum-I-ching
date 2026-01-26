@@ -496,7 +496,13 @@ class Oracle:
             prefix = f"【{label}：{number}. {name}卦】" if label else f"【{number}. {name}卦】"
 
             if doc_type == "main":
-                text = f"{prefix}\n卦辭：{judgment}\n象曰：{image}".strip()
+                # 只在有內容時才添加標籤
+                parts_list = [prefix]
+                if judgment:
+                    parts_list.append(f"卦辭：{judgment}")
+                if image:
+                    parts_list.append(f"象曰：{image}")
+                text = "\n".join(parts_list).strip()
                 if text and text not in seen:
                     seen.add(text)
                     parts.append(text)
@@ -513,7 +519,11 @@ class Oracle:
                             continue
                         meaning = line.get("meaning") or line.get("text") or ""
                         xiang = line.get("xiang") or ""
-                        text = f"{prefix} 第 {ln} 爻：{meaning}\n小象：{xiang}".strip()
+                        # 只在有內容時才添加標籤
+                        parts_list = [f"{prefix} 第 {ln} 爻：{meaning}"]
+                        if xiang:
+                            parts_list.append(f"小象：{xiang}")
+                        text = "\n".join(parts_list).strip()
                         if text and text not in seen:
                             seen.add(text)
                             parts.append(text)

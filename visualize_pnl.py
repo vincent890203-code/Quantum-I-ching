@@ -322,10 +322,9 @@ def plot_strategy_comparison(
     print(f"  Buy & Hold: {total_buyhold:.4f} ({total_buyhold*100:.2f}%)")
     print(f"[INFO] I-Ching 相對 Baseline 提升: {(total_iching - total_baseline)*100:.2f}%")
     
-    # 繪製圖表（深色風格）
-    plt.style.use('dark_background')
-    fig, ax = plt.subplots(figsize=(14, 8), facecolor='#1e1e1e')
-    ax.set_facecolor('#1e1e1e')
+    # 繪製圖表（白色背景風格）
+    fig, ax = plt.subplots(figsize=(14, 8), facecolor='white')
+    ax.set_facecolor('white')
     
     # 繪製累積收益線（符合要求的顏色）
     # Quantum: Red/Gold (#FF6B6B / #FFD700)
@@ -342,21 +341,21 @@ def plot_strategy_comparison(
             linewidth=2, color='#2ECC71', linestyle='--', alpha=0.7)
     
     # 添加零線
-    ax.axhline(y=0, color='white', linestyle='-', linewidth=0.8, alpha=0.5)
+    ax.axhline(y=0, color='black', linestyle='-', linewidth=0.8, alpha=0.3)
     
     # 設置標題和標籤
     ax.set_title('Cumulative Return: Quantum Volatility Strategy vs Baseline', 
-                 fontsize=16, fontweight='bold', pad=20, color='white')
-    ax.set_xlabel('日期', fontsize=13, color='white')
-    ax.set_ylabel('累積收益 (Cumulative PnL)', fontsize=13, color='white')
+                 fontsize=16, fontweight='bold', pad=20, color='#333333')
+    ax.set_xlabel('日期', fontsize=13, color='#333333')
+    ax.set_ylabel('累積收益 (Cumulative PnL)', fontsize=13, color='#333333')
     
-    # 設置圖例（深色背景）
-    ax.legend(loc='best', fontsize=11, framealpha=0.9, facecolor='#2d2d2d', 
-              edgecolor='white', labelcolor='white')
+    # 設置圖例（白色背景）
+    ax.legend(loc='best', fontsize=11, framealpha=0.9, facecolor='white', 
+              edgecolor='#cccccc', labelcolor='#333333')
     
-    # 設置深色網格
-    ax.grid(True, alpha=0.3, linestyle='--', color='white')
-    ax.tick_params(colors='white')
+    # 設置網格
+    ax.grid(True, alpha=0.3, linestyle='--', color='gray')
+    ax.tick_params(colors='#333333')
     
     # 格式化 x 軸日期
     fig.autofmt_xdate()
@@ -371,15 +370,15 @@ def plot_strategy_comparison(
         text = f'Quantum 策略劣於 Baseline: {improvement*100:.2f}%'
     
     ax.text(0.02, 0.98, text,
-            transform=ax.transAxes, fontsize=11, color='white',
+            transform=ax.transAxes, fontsize=11, color='#333333',
             verticalalignment='top', bbox=dict(boxstyle='round', 
-            facecolor='#2d2d2d', alpha=0.9, edgecolor=text_color, linewidth=2))
+            facecolor='white', alpha=0.9, edgecolor=text_color, linewidth=2))
     
     plt.tight_layout()
     
     # 保存圖片
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='#1e1e1e')
+    plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
     print(f"[INFO] 策略比較圖已保存至: {save_path}")
     
     plt.close()

@@ -72,6 +72,15 @@ html, body, [data-testid="stAppViewContainer"] {
     color: #222222;
 }
 
+/* 隱藏 Streamlit 自動生成的標題錨點連結（無意義的連結圖標） */
+[data-testid="stHeaderActionElements"],
+.st-emotion-cache-gi0tri,
+.st-emotion-cache-kwyva7,
+a[aria-label="Link to heading"] {
+    display: none !important;
+    visibility: hidden !important;
+}
+
 /* 主要內容卡片 */
 .stCard {
     background-color: #ffffff;
@@ -386,7 +395,7 @@ def _split_markdown_sections(text: str) -> list[tuple[str, str]]:
 
 
 def plot_volatility_gauge(probability: float) -> go.Figure:
-    """創建簡約風格的波動率 Gauge Chart.
+    """創建半圓形儀表板風格的波動率 Gauge Chart（帶漸層效果和中心指針）.
     
     Args:
         probability: 波動性爆發機率（0-100）。
@@ -394,63 +403,98 @@ def plot_volatility_gauge(probability: float) -> go.Figure:
     Returns:
         Plotly Figure 物件。
     """
-    # 決定顏色區域（0-50% 綠色，50-100% 紅色）
+    # 決定狀態標籤和數字顏色
     if probability < 50:
-        arc_color = "#2ECC71"  # Emerald Green - Stable
         status_label = "Stable"
+        number_color = "#2ECC71"  # 綠色
     else:
-        arc_color = "#E74C3C"  # Alizarin Red - Risk
         status_label = "Risk"
+        number_color = "#E74C3C"  # 紅色
     
-    # 創建簡約的 Gauge Chart
+    # 創建從綠色到紅色的漸層（通過多個 steps 模擬）
+    # 從 0% (綠色，安全) 到 100% (紅色，危險) 的漸層
+    def rgb_to_hex(r, g, b):
+        """將 RGB 轉換為十六進制顏色."""
+        return f"#{int(r):02x}{int(g):02x}{int(b):02x}"
+    
+    # 創建漸層 steps（從綠色 #2ECC71 到紅色 #E74C3C）
+    # 綠色: (46, 204, 113) -> 紅色: (231, 76, 60)
+    # 確保靠近 0 的部分是清楚的綠色
+    gradient_steps = []
+    num_steps = 25  # 增加 steps 數量以獲得更平滑的漸層
+    
+    for i in range(num_steps):
+        # 計算當前 step 的範圍
+        start_val = (i / num_steps) * 100
+        end_val = ((i + 1) / num_steps) * 100
+        
+        # 計算漸層顏色（從綠色到紅色）
+        ratio = i / (num_steps - 1)  # 0 到 1
+        
+        # 確保前 20% 保持清楚的綠色
+        if ratio < 0.2:
+            # 0-20% 保持純綠色
+            r, g, b = 46, 204, 113
+        else:
+            # 20-100% 漸層到紅色
+            adjusted_ratio = (ratio - 0.2) / 0.8  # 重新映射到 0-1
+            r = 46 + (231 - 46) * adjusted_ratio
+            g = 204 - (204 - 76) * adjusted_ratio
+            b = 113 - (113 - 60) * adjusted_ratio
+        
+        color = rgb_to_hex(r, g, b)
+        gradient_steps.append({
+            'range': [start_val, end_val],
+            'color': color,
+            'thickness': 0.25  # 大幅加粗弧線
+        })
+    
+    # 創建半圓形儀表板 Gauge Chart（使用中心指針）
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=probability,
         domain={'x': [0, 1], 'y': [0, 1]},
         title={
             'text': f"<b>{status_label}</b>",
-            'font': {'size': 16, 'family': "Arial, sans-serif", 'color': "#333333"}
+            'font': {'size': 22, 'family': "Arial, sans-serif", 'color': "#333333", 'weight': 'bold'}
         },
         number={
-            'font': {'size': 56, 'color': "#000000", 'family': "Arial, sans-serif", 'weight': 'bold'},
+            'font': {'size': 80, 'color': number_color, 'family': "Arial, sans-serif", 'weight': 'bold'},
             'suffix': '%',
             'valueformat': '.1f'
         },
         gauge={
             'axis': {
                 'range': [None, 100],
-                'tickwidth': 1,
-                'tickcolor': "#666666",
+                'tickwidth': 3,
+                'tickcolor': "#333333",
                 'tickmode': 'linear',
                 'tick0': 0,
-                'dtick': 25,
-                'tickfont': {'size': 11, 'color': "#666666", 'family': "Arial, sans-serif"},
-                'ticklen': 8,
+                'dtick': 10,
+                'tickfont': {'size': 18, 'color': "#333333", 'family': "Arial, sans-serif", 'weight': 'bold'},  # 大幅增大刻度標籤
+                'ticklen': 12,
                 'ticklabelstep': 1
             },
-            'bar': {'color': "#000000", 'thickness': 0.08},  # 黑色指針，細線
+            'bar': {'color': "#000000", 'thickness': 0.2},  # 更粗的指針條
             'bgcolor': "white",
-            'borderwidth': 0,
-            'bordercolor': "white",  # 使用白色替代 transparent
-            'steps': [
-                {'range': [0, 50], 'color': "#2ECC71", 'thickness': 0.03},  # 細綠色弧線
-                {'range': [50, 100], 'color': "#E74C3C", 'thickness': 0.03}  # 細紅色弧線
-            ],
+            'borderwidth': 2,
+            'bordercolor': "#cccccc",
+            'steps': gradient_steps,  # 使用漸層 steps
             'threshold': {
-                'line': {'color': "#000000", 'width': 2},
-                'thickness': 0.75,
-                'value': 100
+                'line': {'color': "#000000", 'width': 5},  # 更粗的指針線
+                'thickness': 0.95,
+                'value': probability  # 指針指向當前值（從中心延伸）
             }
         }
     ))
     
-    # 更新佈局（簡約風格）
+    # 更新佈局（白色背景，專業風格）
     fig.update_layout(
-        height=300,
-        margin=dict(l=40, r=40, t=60, b=40),
+        height=450,  # 進一步增加高度以容納更大的字體
+        margin=dict(l=60, r=60, t=90, b=60),
         paper_bgcolor="white",
         plot_bgcolor="white",
-        font={'color': "#000000", 'family': "Arial, sans-serif"}
+        font={'color': "#333333", 'family': "Arial, sans-serif"}
     )
     
     return fig
@@ -611,9 +655,11 @@ def _render_quantitative_bridge(
 
     # 趨勢強度
     with col_trend:
+        # 添加熊/牛圖標
+        trend_display = f"{trend_label} {'🐂' if trend_label == 'Bullish' else ('🐻' if trend_label == 'Bearish' else '➖')}"
         st.metric(
             label="趨勢強度 (Trend Strength)",
-            value=trend_label,
+            value=trend_display,
             delta=trend_desc,
             delta_color="normal" if trend_label == "Bullish" else ("inverse" if trend_label == "Bearish" else "off"),
             help="基於能量變化（Energy_Delta）或相對成交量（RVOL）判斷。正值表示能量增強，負值表示能量減弱。",
