@@ -58,7 +58,7 @@ st.set_page_config(
 )
 
 
-# ===== 全局樣式（淺色金融風格） =====
+# ===== 全局樣式（支援深色/淺色模式自動切換） =====
 _CUSTOM_CSS = """
 <style>
 /* 整體背景與字體（主區域改為淡灰色） */
@@ -70,6 +70,287 @@ html, body, [data-testid="stAppViewContainer"] {
 
 [data-testid="stSidebar"] {
     color: #222222;
+}
+
+/* 深色模式支援 */
+@media (prefers-color-scheme: dark) {
+    /* 整體背景與字體（深色模式） */
+    html, body, [data-testid="stAppViewContainer"] {
+        background-color: #0f172a !important;
+        color: #e2e8f0 !important;
+    }
+    
+    [data-testid="stSidebar"] {
+        background-color: #1e293b !important;
+        color: #e2e8f0 !important;
+    }
+    
+    /* 側邊欄內所有文字元素 */
+    [data-testid="stSidebar"] * {
+        color: #e2e8f0 !important;
+    }
+    
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3,
+    [data-testid="stSidebar"] .stMarkdown,
+    [data-testid="stSidebar"] .stText,
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] div {
+        color: #e2e8f0 !important;
+    }
+    
+    /* Streamlit 預設元素的深色模式調整 */
+    .stMarkdown, .stText, .stTitle, h1, h2, h3, h4, h5, h6, p, span, div {
+        color: #e2e8f0 !important;
+    }
+    
+    /* 側邊欄輸入框 */
+    [data-testid="stSidebar"] .stTextInput > div > div > input,
+    [data-testid="stSidebar"] .stTextArea > div > div > textarea,
+    [data-testid="stSidebar"] .stSelectbox > div > div > select {
+        background-color: #334155 !important;
+        color: #e2e8f0 !important;
+        border-color: #475569 !important;
+    }
+    
+    /* 側邊欄輸入框標籤 */
+    [data-testid="stSidebar"] .stTextInput label,
+    [data-testid="stSidebar"] .stTextArea label,
+    [data-testid="stSidebar"] .stSelectbox label {
+        color: #e2e8f0 !important;
+    }
+    
+    /* 側邊欄輸入框內的文字 */
+    [data-testid="stSidebar"] input::placeholder,
+    [data-testid="stSidebar"] textarea::placeholder {
+        color: #94a3b8 !important;
+    }
+    
+    /* 輸入框和按鈕（主區域） */
+    .stTextInput > div > div > input,
+    .stTextArea > div > div > textarea,
+    .stSelectbox > div > div > select {
+        background-color: #1e293b !important;
+        color: #e2e8f0 !important;
+        border-color: #475569 !important;
+    }
+    
+    /* 側邊欄按鈕 */
+    [data-testid="stSidebar"] .stButton > button {
+        background-color: #3b82f6 !important;
+        color: #ffffff !important;
+        border-color: #2563eb !important;
+    }
+    
+    [data-testid="stSidebar"] .stButton > button:hover {
+        background-color: #2563eb !important;
+        color: #ffffff !important;
+    }
+    
+    /* 側邊欄表單按鈕 */
+    [data-testid="stSidebar"] button[type="submit"],
+    [data-testid="stSidebar"] .stForm button {
+        background-color: #3b82f6 !important;
+        color: #ffffff !important;
+        border-color: #2563eb !important;
+    }
+    
+    /* 按鈕（主區域） */
+    .stButton > button {
+        background-color: #3b82f6 !important;
+        color: #ffffff !important;
+        border-color: #2563eb !important;
+    }
+    
+    .stButton > button:hover {
+        background-color: #2563eb !important;
+    }
+    
+    /* 側邊欄說明文字 */
+    [data-testid="stSidebar"] .stCaption,
+    [data-testid="stSidebar"] small,
+    [data-testid="stSidebar"] [data-baseweb="tooltip"] {
+        color: #94a3b8 !important;
+    }
+    
+    /* 側邊欄分隔線 */
+    [data-testid="stSidebar"] hr,
+    [data-testid="stSidebar"] .stDivider {
+        border-color: #475569 !important;
+    }
+    
+    /* 側邊欄所有可能的文字元素（更全面的覆蓋） */
+    [data-testid="stSidebar"] [class*="st"],
+    [data-testid="stSidebar"] [class*="element"],
+    [data-testid="stSidebar"] [class*="widget"],
+    [data-testid="stSidebar"] [class*="css"] {
+        color: #e2e8f0 !important;
+    }
+    
+    /* 強制覆蓋 Streamlit 內建樣式 */
+    [data-testid="stSidebar"] [style*="color"] {
+        color: #e2e8f0 !important;
+    }
+    
+    /* 側邊欄下拉選單選項 */
+    [data-testid="stSidebar"] [role="listbox"],
+    [data-testid="stSidebar"] [role="option"] {
+        background-color: #334155 !important;
+        color: #e2e8f0 !important;
+    }
+    
+    /* 側邊欄下拉選單選項懸停 */
+    [data-testid="stSidebar"] [role="option"]:hover {
+        background-color: #475569 !important;
+        color: #ffffff !important;
+    }
+    
+    /* 卡片和容器 */
+    .stCard,
+    [data-testid="stExpander"],
+    [data-testid="stContainer"] {
+        background-color: #1e293b !important;
+        border-color: #475569 !important;
+        color: #e2e8f0 !important;
+    }
+    
+    /* 表格 */
+    .stDataFrame,
+    table {
+        background-color: #1e293b !important;
+        color: #e2e8f0 !important;
+    }
+    
+    /* 標籤和徽章 */
+    .ticker-badge {
+        background-color: #334155 !important;
+        border-color: #475569 !important;
+        color: #e2e8f0 !important;
+    }
+    
+    .ticker-badge span.symbol {
+        color: #60a5fa !important;
+    }
+    
+    .ticker-badge span.label {
+        color: #94a3b8 !important;
+    }
+    
+    /* Oracle Advice 容器 */
+    .oracle-advice {
+        background-color: #1e293b !important;
+        border-color: #475569 !important;
+        color: #e2e8f0 !important;
+    }
+    
+    .oracle-advice-title {
+        color: #e2e8f0 !important;
+    }
+    
+    .oracle-disclaimer {
+        color: #94a3b8 !important;
+        border-top-color: #475569 !important;
+    }
+    
+    /* 卦象標題 */
+    .hexagram-title {
+        color: #e2e8f0 !important;
+    }
+    
+    .hex-label {
+        color: #94a3b8 !important;
+    }
+    
+    .hex-meta {
+        color: #94a3b8 !important;
+    }
+    
+    /* 卦象箭頭 */
+    .hexagram-arrow {
+        color: #60a5fa !important;
+    }
+    
+    /* 卡片標題 */
+    .stCard-header {
+        color: #e2e8f0 !important;
+    }
+    
+    /* 成功/錯誤/資訊訊息框 */
+    .stSuccess {
+        background-color: #065f46 !important;
+        color: #d1fae5 !important;
+    }
+    
+    .stError {
+        background-color: #991b1b !important;
+        color: #fee2e2 !important;
+    }
+    
+    .stInfo {
+        background-color: #1e3a8a !important;
+        color: #dbeafe !important;
+    }
+    
+    .stWarning {
+        background-color: #78350f !important;
+        color: #fef3c7 !important;
+    }
+    
+    /* 分隔線 */
+    hr, .stDivider {
+        border-color: #475569 !important;
+    }
+    
+    /* 說明文字 */
+    .stCaption {
+        color: #94a3b8 !important;
+    }
+    
+    /* 展開器標題 */
+    [data-testid="stExpander"] summary {
+        color: #e2e8f0 !important;
+    }
+    
+    /* Plotly 圖表容器在深色模式下的調整 */
+    .js-plotly-plot,
+    .plotly {
+        background-color: #1e293b !important;
+    }
+    
+    /* Plotly 圖表文字顏色（深色模式下） */
+    .js-plotly-plot .xtick text,
+    .js-plotly-plot .ytick text,
+    .js-plotly-plot .gtitle,
+    .js-plotly-plot .g-xtitle,
+    .js-plotly-plot .g-ytitle {
+        fill: #e2e8f0 !important;
+        color: #e2e8f0 !important;
+    }
+}
+
+/* 強制 Plotly 圖表文字為黑色（在所有模式下） */
+.js-plotly-plot .xtick text,
+.js-plotly-plot .ytick text,
+.js-plotly-plot .gtitle,
+.js-plotly-plot .g-xtitle,
+.js-plotly-plot .g-ytitle,
+.js-plotly-plot text {
+    fill: #000000 !important;
+    color: #000000 !important;
+    stroke: none !important;  /* 移除描邊，避免文字變粗 */
+    stroke-width: 0 !important;
+    text-shadow: none !important;  /* 移除陰影 */
+    font-weight: normal !important;  /* 確保不是粗體 */
+}
+
+/* 確保 Plotly 圖表線條為黑色 */
+.js-plotly-plot .gridlayer path,
+.js-plotly-plot .xlines path,
+.js-plotly-plot .ylines path {
+    stroke: #000000 !important;
 }
 
 /* 隱藏 Streamlit 自動生成的標題錨點連結（無意義的連結圖標） */
@@ -143,6 +424,38 @@ a[aria-label="Link to heading"] {
     width: 38%;
     border-radius: 999px;
     background-color: #d9534f;
+}
+
+/* 深色模式下的卦象線條 */
+@media (prefers-color-scheme: dark) {
+    /* 陽爻：淺藍色（深色模式下更明顯） */
+    .hex-line.yang {
+        background-color: #60a5fa !important;
+    }
+    
+    /* 陰爻：淺橘色（深色模式下更明顯） */
+    .hex-line.yin::before,
+    .hex-line.yin::after {
+        background-color: #fb923c !important;
+    }
+    
+    /* 動爻高亮（深色模式） */
+    .hex-line.moving {
+        box-shadow: 0 0 0 2px #fbbf24 !important;
+    }
+    
+    @keyframes pulse-moving-dark {
+        0%, 100% {
+            box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.6);
+        }
+        50% {
+            box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.9);
+        }
+    }
+    
+    .hex-line.moving {
+        animation: pulse-moving-dark 2s ease-in-out infinite !important;
+    }
 }
 
 .hex-line.yin::before {
@@ -245,6 +558,134 @@ a[aria-label="Link to heading"] {
 """
 
 st.markdown(_CUSTOM_CSS, unsafe_allow_html=True)
+
+# 注入 JavaScript 來動態調整 Plotly 圖表以適應深色模式
+_DARK_MODE_SCRIPT = """
+<script>
+(function() {
+    function adjustPlotlyForDarkMode() {
+        // 始終使用白色背景和黑色文字/線條，確保可讀性（不管深色模式如何）
+        function tryAdjust() {
+            const plotlyDivs = document.querySelectorAll('.js-plotly-plot');
+            if (plotlyDivs.length === 0) {
+                return false;
+            }
+            
+            plotlyDivs.forEach(function(plotDiv) {
+                if (window.Plotly) {
+                    try {
+                        // 強制使用白色背景和黑色文字/線條，確保在所有模式下都可讀
+                        // 使用 update 方法來更強制地設定所有屬性
+                        window.Plotly.relayout(plotDiv, {
+                            'paper_bgcolor': '#ffffff',
+                            'plot_bgcolor': '#ffffff',
+                            'font': {'color': '#000000', 'family': 'Arial, sans-serif'},
+                            'title': {'font': {'color': '#000000', 'size': 14, 'family': 'Arial, sans-serif'}},
+                            'xaxis': {
+                                'gridcolor': '#000000',
+                                'linecolor': '#000000',
+                                'zerolinecolor': '#000000',
+                                'showgrid': true,
+                                'gridwidth': 1,
+                                'showline': true,
+                                'linewidth': 2,
+                                'title': {'font': {'color': '#000000', 'size': 12, 'family': 'Arial, sans-serif'}},
+                                'tickfont': {'color': '#000000', 'size': 11, 'family': 'Arial, sans-serif'},
+                                'tickcolor': '#000000'
+                            },
+                            'yaxis': {
+                                'gridcolor': '#000000',
+                                'linecolor': '#000000',
+                                'zerolinecolor': '#000000',
+                                'showgrid': true,
+                                'gridwidth': 1,
+                                'showline': true,
+                                'linewidth': 2,
+                                'title': {'font': {'color': '#000000', 'size': 12, 'family': 'Arial, sans-serif'}},
+                                'tickfont': {'color': '#000000', 'size': 11, 'family': 'Arial, sans-serif'},
+                                'tickcolor': '#000000'
+                            }
+                        });
+                        
+                        // 使用 CSS 強制覆蓋 Plotly 的文字顏色
+                        const plotlyContainer = plotDiv.closest('.js-plotly-plot') || plotDiv;
+                        if (plotlyContainer) {
+                            const style = document.createElement('style');
+                            style.textContent = `
+                                .js-plotly-plot .xtick text,
+                                .js-plotly-plot .ytick text,
+                                .js-plotly-plot .gtitle,
+                                .js-plotly-plot .g-xtitle,
+                                .js-plotly-plot .g-ytitle {
+                                    fill: #000000 !important;
+                                    color: #000000 !important;
+                                    stroke: none !important;
+                                    stroke-width: 0 !important;
+                                    text-shadow: none !important;
+                                    font-weight: normal !important;
+                                }
+                            `;
+                            if (!document.head.querySelector('style[data-plotly-fix]')) {
+                                style.setAttribute('data-plotly-fix', 'true');
+                                document.head.appendChild(style);
+                            }
+                        }
+                    } catch(e) {
+                        console.log('Plotly adjustment error:', e);
+                    }
+                }
+            });
+            return true;
+        }
+        
+        // 多次嘗試，確保圖表渲染後應用
+        setTimeout(tryAdjust, 500);
+        setTimeout(tryAdjust, 1000);
+        setTimeout(tryAdjust, 2000);
+        setTimeout(tryAdjust, 3000);
+    }
+    
+    // 初始調整（多次嘗試以確保圖表已渲染）
+    adjustPlotlyForDarkMode();
+    setTimeout(adjustPlotlyForDarkMode, 500);
+    setTimeout(adjustPlotlyForDarkMode, 1500);
+    setTimeout(adjustPlotlyForDarkMode, 3000);
+    
+    // 監聽深色模式變化
+    if (window.matchMedia) {
+        const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+        mediaQuery.addEventListener('change', function() {
+            setTimeout(adjustPlotlyForDarkMode, 100);
+            setTimeout(adjustPlotlyForDarkMode, 500);
+        });
+    }
+    
+    // 監聽新圖表添加（使用更積極的策略）
+    const observer = new MutationObserver(function() {
+        setTimeout(adjustPlotlyForDarkMode, 100);
+        setTimeout(adjustPlotlyForDarkMode, 500);
+        setTimeout(adjustPlotlyForDarkMode, 1000);
+    });
+    observer.observe(document.body, {childList: true, subtree: true});
+    
+    // 監聽 Plotly 圖表渲染完成事件
+    if (window.Plotly) {
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(adjustPlotlyForDarkMode, 500);
+            setTimeout(adjustPlotlyForDarkMode, 1500);
+        });
+    }
+})();
+</script>
+"""
+
+# 使用 components.html 來注入 JavaScript（這會在每次頁面載入時執行）
+try:
+    import streamlit.components.v1 as components
+    components.html(_DARK_MODE_SCRIPT, height=0, width=0)
+except:
+    # 如果 components 不可用，使用 markdown（可能不會執行，但至少不會報錯）
+    st.markdown(_DARK_MODE_SCRIPT, unsafe_allow_html=True)
 
 
 # ===== Oracle 初始化（資源快取） =====
@@ -488,13 +929,17 @@ def plot_volatility_gauge(probability: float) -> go.Figure:
         }
     ))
     
-    # 更新佈局（白色背景，專業風格）
+    # 更新佈局（白色背景，專業風格，響應式設計）
     fig.update_layout(
         height=450,  # 進一步增加高度以容納更大的字體
         margin=dict(l=60, r=60, t=90, b=60),
         paper_bgcolor="white",
         plot_bgcolor="white",
-        font={'color': "#333333", 'family': "Arial, sans-serif"}
+        font={'color': "#333333", 'family': "Arial, sans-serif"},
+        # 確保圖表自動適應容器寬度，數字自動居中
+        autosize=True,
+        # 使用響應式布局
+        template="plotly_white"
     )
     
     return fig
@@ -696,11 +1141,10 @@ def _classify_action_tone(text: str) -> str:
     return "neutral"
 
 
-def render_ai_response(ai_answer: str) -> None:
-    """依資訊層級呈現 AI 回應，避免重複段落."""
+def _parse_ai_response(ai_answer: str) -> dict | None:
+    """解析 AI 回應但不顯示，只返回解析後的數據."""
     if not ai_answer:
-        st.info("目前尚未取得 Oracle 回應。")
-        return
+        return None
 
     # --- 優先嘗試：依 Markdown 標題分段 ---
     sections = _split_markdown_sections(ai_answer)
@@ -783,6 +1227,32 @@ def render_ai_response(ai_answer: str) -> None:
         summary_text = ai_answer
     if action_text is None:
         action_text = ai_answer
+    
+    # 返回解析後的內容（不顯示）
+    return {
+        "summary": summary_text,
+        "action": action_text,
+        "source": source_text,
+        "decoding": decoding_text,
+        "full_answer": ai_answer
+    }
+
+
+def render_ai_response(ai_answer: str) -> dict | None:
+    """依資訊層級呈現 AI 回應，避免重複段落."""
+    if not ai_answer:
+        st.info("目前尚未取得 Oracle 回應。")
+        return None
+
+    # 先解析數據
+    response_data = _parse_ai_response(ai_answer)
+    if not response_data:
+        return None
+    
+    summary_text = response_data.get("summary", "")
+    action_text = response_data.get("action", "")
+    source_text = response_data.get("source", "")
+    decoding_text = response_data.get("decoding", "")
 
     # --- 呈現層級 ---
     st.markdown("## 🔮 Oracle's Advice / 卜卦解讀")
@@ -820,6 +1290,129 @@ def render_ai_response(ai_answer: str) -> None:
     st.caption(
         "以上內容僅供研究與教育參考，不構成任何投資建議或買賣邀約，實際投資決策請自行評估風險。"
     )
+    
+    # 返回解析後的內容，供追問系統使用
+    return response_data
+
+
+def render_followup_system(
+    oracle: Oracle,
+    response_data: dict,
+    full_answer: str,
+    ticker: str,
+    market_state: dict,
+    market_type: str
+) -> None:
+    """渲染追問系統，讓用戶可以針對已生成的 Oracle 回答進行追問."""
+    # 初始化 session_state 中的追問歷史
+    if 'followup_history' not in st.session_state:
+        st.session_state.followup_history = []
+    
+    # 獨立容器顯示追問系統
+    with st.container(border=True):
+        st.markdown("## 💬 AI 小幫手 / Follow-up Questions")
+        st.caption("您可以針對上述卜卦解讀進行追問，AI 會根據原始回答為您進一步說明。")
+        
+        # 顯示所有追問歷史（討論串形式）- 先顯示已生成的內容，避免變淡
+        if st.session_state.followup_history:
+            st.divider()
+            st.markdown("### 💬 討論串")
+            # 從舊到新顯示所有追問（已生成的內容持久顯示）
+            for idx, item in enumerate(st.session_state.followup_history, 1):
+                with st.container():
+                    st.markdown(f"**Q{idx}: {item['question']}**")
+                    st.markdown(item['answer'])
+                    if idx < len(st.session_state.followup_history):
+                        st.divider()
+        
+        # 處理待處理的追問（在顯示歷史後處理，確保新回答在底部）
+        # 使用獨立的容器來隔離加載狀態，確保不影響其他區塊
+        loading_container = st.empty()
+        if 'pending_followup_question' in st.session_state and st.session_state.pending_followup_question:
+            followup_question = st.session_state.pending_followup_question
+            # 清除待處理標記
+            del st.session_state.pending_followup_question
+            
+            if followup_question.strip():
+                # 在獨立的容器中顯示加載提示（只在 AI 小幫手區塊內）
+                with loading_container.container():
+                    st.info("🤔 正在思考中...")
+                
+                try:
+                    # 構建追問的提示詞
+                    followup_prompt = f"""你是一位專業的 AI 金融顧問，正在協助用戶理解 Quantum I-Ching 的卜卦解讀。
+
+**原始卜卦解讀內容：**
+{full_answer}
+
+**股票資訊：**
+- 股票代號：{ticker}
+- 市場類型：{market_type}
+
+**用戶的追問：**
+{followup_question.strip()}
+
+請根據上述原始卜卦解讀內容，針對用戶的追問提供詳細、專業且易懂的回答。回答時：
+1. 直接回應用戶的問題，不要重複原始回答的內容
+2. 如果問題涉及原始回答中的特定部分，請引用並詳細說明
+3. 使用繁體中文回答
+4. 保持專業但易懂的語氣
+5. 如果問題超出原始回答的範圍，可以基於易經原理和金融知識進行合理推論
+
+請開始回答："""
+
+                    # 使用 Gemini 模型生成回答
+                    response = oracle.model.generate_content(followup_prompt)
+                    
+                    # 清除加載提示
+                    loading_container.empty()
+                    
+                    if response and hasattr(response, 'text'):
+                        followup_answer = response.text
+                        
+                        # 保存到歷史記錄
+                        st.session_state.followup_history.append({
+                            "question": followup_question.strip(),
+                            "answer": followup_answer
+                        })
+                        
+                        # 重新運行以顯示新回答
+                        st.rerun()
+                    else:
+                        loading_container.empty()
+                        st.error("無法生成回答，請稍後再試。")
+                        
+                except Exception as e:
+                    loading_container.empty()
+                    st.error(f"發生錯誤：{str(e)}")
+        
+        # 使用表單來輸入新問題
+        with st.form(key="followup_form", clear_on_submit=True):
+            followup_question = st.text_input(
+                "請輸入您的問題",
+                placeholder="例如：為什麼建議持有？風險在哪裡？這個卦象的具體含義是什麼？",
+                key="followup_input",
+                label_visibility="visible"
+            )
+            
+            col1, col2 = st.columns([1, 5])
+            with col1:
+                submitted = st.form_submit_button("發送", use_container_width=True, type="primary")
+        
+        # 處理表單提交（保存問題到 session_state，然後 rerun）
+        if submitted:
+            if followup_question and followup_question.strip():
+                # 保存問題到 session_state，因為表單提交後輸入框會被清除
+                st.session_state['pending_followup_question'] = followup_question.strip()
+                st.rerun()
+            else:
+                st.warning("請輸入問題後再發送。")
+        
+        # 清除追問歷史按鈕（放在最後）
+        if st.session_state.followup_history:
+            if st.button("清除所有追問", use_container_width=True, key="clear_followup_btn"):
+                st.session_state.followup_history = []
+                st.rerun()
 
 
 def render_volatility_gauge(
@@ -997,11 +1590,8 @@ def main() -> None:
             help="台股可直接輸入數字（如 2330），美股輸入代碼（如 NVDA），加密貨幣輸入代碼（如 BTC）"
         ).strip().upper()
 
-        question = st.text_area(
-            "問題 / Question",
-            value="Should I buy now? / 我現在該買嗎？",
-            height=100,
-        ).strip()
+        # 固定問題為「目前趨勢」
+        question = "目前趨勢"
 
         consult = st.button("Consult the Oracle (卜卦)", use_container_width=True)
 
@@ -1029,7 +1619,22 @@ def main() -> None:
     # 主要佈局：左側 K 線圖（2/3），右側卦象卡片（1/3）
     col_chart, col_hex = st.columns([2, 1])
 
+    # 保存 consult 狀態到 session_state（用於追問系統保持狀態）
     if consult:
+        st.session_state['last_consult_ticker'] = user_ticker
+        st.session_state['last_consult_market_type'] = market_type
+        # 清除之前的追問歷史
+        if 'followup_history' in st.session_state:
+            st.session_state.followup_history = []
+    
+    # 檢查是否應該顯示結果（包括追問後的狀態）
+    should_show_results = consult or (
+        st.session_state.get('last_consult_ticker') == user_ticker and
+        st.session_state.get('last_consult_market_type') == market_type and
+        st.session_state.get('last_consult_ticker') is not None
+    )
+    
+    if should_show_results:
         if not user_ticker:
             st.error("請輸入有效的股票代號（Ticker）。")
             return
@@ -1069,6 +1674,12 @@ def main() -> None:
         else:  # US
             # 美股：直接使用，不補後綴
             backend_ticker = user_ticker
+        
+        # 在確定 backend_ticker 後，清除對應的 Oracle's Advice 緩存（新的 consult 需要重新生成）
+        if consult:
+            oracle_cache_key = f"oracle_answer_{backend_ticker}_{market_type}"
+            if oracle_cache_key in st.session_state:
+                del st.session_state[oracle_cache_key]
 
         try:
             oracle = get_oracle()
@@ -1080,124 +1691,123 @@ def main() -> None:
             )
             return
 
-        with st.spinner("Analyzing Market Structure & Consulting Spirits..."):
-            # ===== Step 1: 取得市場資料與卦象 =====
-            try:
-                raw_df = oracle.data_loader.fetch_data(tickers=[backend_ticker], market_type=market_type)
-            except Exception as e:
-                st.error(f"下載市場資料時發生錯誤：{e}")
-                return
+        # ===== Step 1: 取得市場資料與卦象 =====
+        try:
+            raw_df = oracle.data_loader.fetch_data(tickers=[backend_ticker], market_type=market_type)
+        except Exception as e:
+            st.error(f"下載市場資料時發生錯誤：{e}")
+            return
 
-            if raw_df is None or raw_df.empty:
-                st.error(
-                    f"無法取得 `{user_ticker}` 的市場資料，"
-                    "請確認代號是否正確或日期區間內是否有交易資料。"
-                )
-                return
-
-            try:
-                encoded_df = oracle.encoder.generate_hexagrams(raw_df)
-            except Exception as e:
-                st.error(f"將市場資料轉換為易經卦象時發生錯誤：{e}")
-                return
-
-            if (
-                encoded_df is None
-                or encoded_df.empty
-                or "Ritual_Sequence" not in encoded_df.columns
-            ):
-                st.error(
-                    "資料不足以生成卦象（需要至少 26 天以上的有效價格資料）。"
-                )
-                return
-
-            # 過濾掉 Ritual_Sequence 或 Hexagram_Binary 為空的列
-            valid_rows = encoded_df.dropna(
-                subset=["Ritual_Sequence", "Hexagram_Binary"]
+        if raw_df is None or raw_df.empty:
+            st.error(
+                f"無法取得 `{user_ticker}` 的市場資料，"
+                "請確認代號是否正確或日期區間內是否有交易資料。"
             )
-            if valid_rows.empty:
-                st.error(
-                    "雖然成功下載價格資料，但尚未累積足夠的技術指標樣本以生成完整卦象。"
-                )
-                return
+            return
 
-            latest_row = valid_rows.iloc[-1]
+        try:
+            encoded_df = oracle.encoder.generate_hexagrams(raw_df)
+        except Exception as e:
+            st.error(f"將市場資料轉換為易經卦象時發生錯誤：{e}")
+            return
 
-            ritual_sequence_str = str(latest_row["Ritual_Sequence"])
-            try:
-                ritual_sequence = [int(ch) for ch in ritual_sequence_str]
-            except ValueError:
-                st.error("儀式數字序列格式錯誤，無法解析。")
-                return
+        if (
+            encoded_df is None
+            or encoded_df.empty
+            or "Ritual_Sequence" not in encoded_df.columns
+        ):
+            st.error(
+                "資料不足以生成卦象（需要至少 26 天以上的有效價格資料）。"
+            )
+            return
 
-            if len(ritual_sequence) != 6:
-                st.error(
-                    f"儀式數字序列長度不正確（期望 6 位，實際為 {len(ritual_sequence)}）。"
-                )
-                return
+        # 過濾掉 Ritual_Sequence 或 Hexagram_Binary 為空的列
+        valid_rows = encoded_df.dropna(
+            subset=["Ritual_Sequence", "Hexagram_Binary"]
+        )
+        if valid_rows.empty:
+            st.error(
+                "雖然成功下載價格資料，但尚未累積足夠的技術指標樣本以生成完整卦象。"
+            )
+            return
 
-            binary_code = str(latest_row["Hexagram_Binary"])
-            if not binary_code or len(binary_code) != 6:
-                st.error("卦象二進制編碼缺失或格式錯誤，無法顯示卦象。")
-                return
+        latest_row = valid_rows.iloc[-1]
 
-            # 使用 IChingCore 取得卦象名稱（本卦）
-            try:
-                interpretation = oracle.core.interpret_sequence(ritual_sequence)
-                current_hex = interpretation.get("current_hex", {}) or {}
-                hexagram_name_full = current_hex.get("name", "Unknown")
-                chinese_name = current_hex.get("nature", "?")
-                hexagram_id = current_hex.get("id", 0)
-            except Exception as e:
-                st.error(f"解析卦象資訊時發生錯誤：{e}")
-                return
+        ritual_sequence_str = str(latest_row["Ritual_Sequence"])
+        try:
+            ritual_sequence = [int(ch) for ch in ritual_sequence_str]
+        except ValueError:
+            st.error("儀式數字序列格式錯誤，無法解析。")
+            return
 
-            # 英文名稱可能含括號，取主要名稱
-            if "(" in hexagram_name_full:
-                hexagram_name = hexagram_name_full.split("(", 1)[0].strip()
-            else:
-                hexagram_name = hexagram_name_full
+        if len(ritual_sequence) != 6:
+            st.error(
+                f"儀式數字序列長度不正確（期望 6 位，實際為 {len(ritual_sequence)}）。"
+            )
+            return
 
-            # 構造單一來源的市場狀態（Calculate Once, Use Everywhere）
-            current_market_state: dict = {
-                "ticker": backend_ticker,
-                "market_type": market_type,
-                "raw_df": raw_df,
-                "encoded_df": encoded_df,
-                "latest_row_index": latest_row.name,
-                "ritual_sequence": ritual_sequence,
-                "ritual_sequence_str": ritual_sequence_str,
-                "binary_code": binary_code,
-                "hexagram_id": hexagram_id,
-                "hex_name": hexagram_name_full,
-                "hex_name_stripped": hexagram_name,
-                "chinese_name": chinese_name,
-            }
+        binary_code = str(latest_row["Hexagram_Binary"])
+        if not binary_code or len(binary_code) != 6:
+            st.error("卦象二進制編碼缺失或格式錯誤，無法顯示卦象。")
+            return
 
-            # ===== Step 2: 市場 K 線圖（左側） =====
-            stock_name: str | None = None
-            # 嘗試從 yfinance 取得標的名稱（台股 / 美股皆適用）
-            try:
-                formatted_ticker = oracle.data_loader._format_ticker(backend_ticker)  # type: ignore[attr-defined]
-                info = yf.Ticker(formatted_ticker).info or {}
-                stock_name = info.get("shortName") or info.get("longName")
-            except Exception:
-                stock_name = None
+        # 使用 IChingCore 取得卦象名稱（本卦）
+        try:
+            interpretation = oracle.core.interpret_sequence(ritual_sequence)
+            current_hex = interpretation.get("current_hex", {}) or {}
+            hexagram_name_full = current_hex.get("name", "Unknown")
+            chinese_name = current_hex.get("nature", "?")
+            hexagram_id = current_hex.get("id", 0)
+        except Exception as e:
+            st.error(f"解析卦象資訊時發生錯誤：{e}")
+            return
 
-            # 決定顯示用代號與名稱（確保圖表標題清楚標示「代號 + 名稱」）
-            display_code = backend_ticker
-            
-            # 優先順序：display_name_override > 台股中文名稱 > yfinance 英文名稱 > 原始輸入
-            if display_name_override:
-                display_name = display_name_override
-            elif market_type == "TW" and resolved_code:
-                # 台股：嘗試從反向映射取得中文名稱
-                chinese_name_from_map = TW_TICKER_TO_CHINESE_NAME.get(resolved_code)
-                display_name = chinese_name_from_map or stock_name or original_input
-            else:
-                display_name = stock_name or original_input
+        # 英文名稱可能含括號，取主要名稱
+        if "(" in hexagram_name_full:
+            hexagram_name = hexagram_name_full.split("(", 1)[0].strip()
+        else:
+            hexagram_name = hexagram_name_full
 
-            with col_chart:
+        # 構造單一來源的市場狀態（Calculate Once, Use Everywhere）
+        current_market_state: dict = {
+            "ticker": backend_ticker,
+            "market_type": market_type,
+            "raw_df": raw_df,
+            "encoded_df": encoded_df,
+            "latest_row_index": latest_row.name,
+            "ritual_sequence": ritual_sequence,
+            "ritual_sequence_str": ritual_sequence_str,
+            "binary_code": binary_code,
+            "hexagram_id": hexagram_id,
+            "hex_name": hexagram_name_full,
+            "hex_name_stripped": hexagram_name,
+            "chinese_name": chinese_name,
+        }
+
+        # ===== Step 2: 市場 K 線圖（左側） =====
+        stock_name: str | None = None
+        # 嘗試從 yfinance 取得標的名稱（台股 / 美股皆適用）
+        try:
+            formatted_ticker = oracle.data_loader._format_ticker(backend_ticker)  # type: ignore[attr-defined]
+            info = yf.Ticker(formatted_ticker).info or {}
+            stock_name = info.get("shortName") or info.get("longName")
+        except Exception:
+            stock_name = None
+
+        # 決定顯示用代號與名稱（確保圖表標題清楚標示「代號 + 名稱」）
+        display_code = backend_ticker
+        
+        # 優先順序：display_name_override > 台股中文名稱 > yfinance 英文名稱 > 原始輸入
+        if display_name_override:
+            display_name = display_name_override
+        elif market_type == "TW" and resolved_code:
+            # 台股：嘗試從反向映射取得中文名稱
+            chinese_name_from_map = TW_TICKER_TO_CHINESE_NAME.get(resolved_code)
+            display_name = chinese_name_from_map or stock_name or original_input
+        else:
+            display_name = stock_name or original_input
+
+        with col_chart:
                 chart_df = raw_df.tail(60).copy()
                 if chart_df.empty:
                     st.warning("近期 60 日內資料不足，無法繪製 K 線圖。")
@@ -1226,26 +1836,116 @@ def main() -> None:
                         ]
                     )
 
+                    # 使用黑色文字和線條，確保在白色背景上清晰可見
                     fig.update_layout(
-                        title=(
-                            f"{display_code} ({display_name})"
-                            + f" - {chinese_name} / {hexagram_name} "
-                            f"(最近 60 日價格走勢)"
+                        title=dict(
+                            text=(
+                                f"{display_code} ({display_name})"
+                                + f" - {chinese_name} / {hexagram_name} "
+                                f"(最近 60 日價格走勢)"
+                            ),
+                            font=dict(
+                                color="#000000",
+                                size=14,
+                                family="Arial, sans-serif",
+                            ),
+                            x=0.02,  # 左對齊
+                            xanchor="left",
                         ),
                         template="plotly_white",
                         paper_bgcolor="#ffffff",
                         plot_bgcolor="#ffffff",
                         margin=dict(l=10, r=10, t=40, b=10),
-                        xaxis_title="Date",
-                        yaxis_title="Price",
-                        xaxis_rangeslider_visible=False,
-                        font=dict(color="#333333"),
+                        # 全域字體設定（黑色，確保所有文字都可讀）
+                        font=dict(color="#000000", size=12, family="Arial, sans-serif"),
                     )
+                    
+                    # 添加縱向交替色塊（對齊 X 軸主要時間刻度）
+                    # 使用兩種低對比度的深灰色交替排列
+                    dates = pd.to_datetime(chart_df[date_col])
+                    min_date = dates.min()
+                    max_date = dates.max()
+                    
+                    # 淺灰色與白色交替排列
+                    color1 = "#e8e8e8"  # 淺灰色
+                    color2 = "#ffffff"  # 白色
+                    
+                    # 根據日期範圍計算色塊數量（約每 2 週一個色塊，對齊主要時間刻度）
+                    date_range_days = (max_date - min_date).days
+                    # 計算合理的色塊數量（每 14 天一個，但至少 4 個，最多 12 個）
+                    num_bands = max(4, min(12, int(date_range_days / 14)))
+                    
+                    # 創建交替色塊，對齊日期邊界
+                    shapes = []
+                    band_width_days = date_range_days / num_bands
+                    
+                    for i in range(num_bands):
+                        # 計算每個色塊的起始和結束日期
+                        start_offset = i * band_width_days
+                        end_offset = (i + 1) * band_width_days
+                        
+                        start_date = min_date + pd.Timedelta(days=start_offset)
+                        end_date = min_date + pd.Timedelta(days=end_offset)
+                        
+                        # 最後一個色塊延伸到最大日期
+                        if i == num_bands - 1:
+                            end_date = max_date
+                        
+                        # 交替使用兩種顏色
+                        band_color = color1 if i % 2 == 0 else color2
+                        
+                        shapes.append(
+                            dict(
+                                type="rect",
+                                xref="x",
+                                yref="paper",  # 使用 paper 參考以覆蓋整個 Y 軸範圍
+                                x0=start_date,
+                                y0=0,
+                                x1=end_date,
+                                y1=1,
+                                fillcolor=band_color,
+                                opacity=1.0,  # 完全不透明，確保色塊清晰可見
+                                layer="below",  # 放在 K 線下方
+                                line_width=0,  # 無邊框
+                            )
+                        )
+                    
+                    # 使用 update_xaxes 和 update_yaxes 強制設定所有屬性
+                    # X軸不使用網格線，Y軸使用深灰色網格線
+                    fig.update_xaxes(
+                        title="Date",
+                        title_font=dict(color="#000000", size=12, family="Arial, sans-serif"),
+                        tickfont=dict(color="#000000", size=11, family="Arial, sans-serif"),
+                        # X軸標籤置中對齊（使用 period 模式讓標籤在刻度區間中間）
+                        ticklabelmode='period',
+                        # 隱藏軸線（完全透明）
+                        linecolor="rgba(0,0,0,0)",  # 完全透明
+                        zeroline=False,  # 隱藏零線
+                        showgrid=False,  # X軸不使用網格線
+                        showline=False,  # 隱藏軸線邊框
+                        rangeslider=dict(visible=False),
+                    )
+                    
+                    fig.update_yaxes(
+                        title="Price",
+                        title_font=dict(color="#000000", size=12, family="Arial, sans-serif"),
+                        tickfont=dict(color="#000000", size=11, family="Arial, sans-serif"),
+                        gridcolor="#808080",  # 深灰色網格線（不是黑色）
+                        # 隱藏軸線（完全透明）
+                        linecolor="rgba(0,0,0,0)",  # 完全透明
+                        zeroline=False,  # 隱藏零線
+                        showgrid=True,  # Y軸使用網格線
+                        gridwidth=1,
+                        showline=False,  # 隱藏軸線邊框
+                    )
+                    
+                    # 將色塊添加到圖表
+                    fig.update_layout(shapes=shapes)
 
                     st.plotly_chart(fig, use_container_width=True)
 
-            # ===== Step 3: 卦象視覺化卡片（右側） =====
-            with col_hex:
+        # ===== Step 3: 卦象視覺化卡片（右側） =====
+        with col_hex:
                 # 直接使用簡潔佈局，不額外加外框
                 st.markdown("#### I-Ching 市場卦象")
                 st.markdown(
@@ -1358,36 +2058,97 @@ def main() -> None:
                     # 若無之卦，使用本卦陽爻比例顯示情緒儀表
                     render_sentiment_gauge(binary_code)
 
-            # ===== Step 4: 量化橋接指標列（連結價格與卦象） =====
-            moving_lines_for_state = [
-                i + 1 for i, n in enumerate(ritual_sequence) if n in (6, 9)
-            ]
-            _render_quantitative_bridge(
-                raw_df=raw_df,
-                ritual_sequence=ritual_sequence,
-                moving_lines=moving_lines_for_state,
-                latest_row=latest_row,
-            )
+        # ===== Step 4: 量化橋接指標列（連結價格與卦象） =====
+        moving_lines_for_state = [
+            i + 1 for i, n in enumerate(ritual_sequence) if n in (6, 9)
+        ]
+        _render_quantitative_bridge(
+            raw_df=raw_df,
+            ritual_sequence=ritual_sequence,
+            moving_lines=moving_lines_for_state,
+            latest_row=latest_row,
+        )
 
-            # ===== Step 4.5: 波動率 Gauge Chart（簡約風格） =====
-            render_volatility_gauge(
-                raw_df=raw_df,
-                ritual_sequence=ritual_sequence,
-                latest_row=latest_row
-            )
+        # ===== Step 4.5: 波動率 Gauge Chart（簡約風格） =====
+        render_volatility_gauge(
+            raw_df=raw_df,
+            ritual_sequence=ritual_sequence,
+            latest_row=latest_row
+        )
 
-            # ===== Step 5: AI 易經解讀（依資訊層級呈現） =====
-            # 使用單一來源的市場狀態，確保上方顯示與下方解讀使用完全相同的卦象
-            ai_answer = oracle.ask(
-                backend_ticker,
-                question or "Should I buy now?",
-                precomputed_data=current_market_state,
-                market_type=market_type,
-            )
-
-            # 以帶邊框容器包覆整體文字解讀區，與上方圖表區隔
+        # ===== Step 5: AI 易經解讀（依資訊層級呈現） =====
+        # 檢查是否已經生成過 Oracle's Advice（避免追問時重新生成）
+        oracle_cache_key = f"oracle_answer_{backend_ticker}_{market_type}"
+        
+        # 只在第一次 consult 時生成，追問時使用緩存
+        if consult and (oracle_cache_key not in st.session_state):
+            # 只在真正點擊 consult 按鈕且沒有緩存時生成
+            with st.spinner("Analyzing Market Structure & Consulting Spirits..."):
+                ai_answer = oracle.ask(
+                    backend_ticker,
+                    question,  # 固定為「目前趨勢」
+                    precomputed_data=current_market_state,
+                    market_type=market_type,
+                )
+            
+            # 解析但不顯示（只保存到 session_state，統一在下面顯示）
+            response_data = _parse_ai_response(ai_answer)
+            if response_data:
+                st.session_state[oracle_cache_key] = {
+                    'ai_answer': ai_answer,
+                    'response_data': response_data,
+                    'ticker': backend_ticker,
+                    'market_state': current_market_state,
+                    'market_type': market_type
+                }
+        elif oracle_cache_key in st.session_state:
+            # 使用緩存的結果（追問時不重新生成，直接顯示）
+            cached = st.session_state[oracle_cache_key]
+            ai_answer = cached['ai_answer']
+            response_data = cached['response_data']
+        else:
+            # 沒有緩存且沒有點擊 consult，不顯示
+            response_data = None
+            ai_answer = None
+        
+        # 始終顯示 Oracle's Advice（不受追問加載狀態影響）
+        if response_data:
+            # 直接顯示已緩存的內容（不重新解析，避免變淡）
             with st.container(border=True):
-                render_ai_response(ai_answer)
+                # 直接顯示已解析的內容，不重新調用 render_ai_response
+                st.markdown("## 🔮 Oracle's Advice / 卜卦解讀")
+                st.markdown("### 🚀 投資快訊 (Executive Summary)")
+                st.markdown(response_data.get('summary', ''))
+                st.markdown("### 🎯 關鍵操作建議 (Action Plan)")
+                action_text = response_data.get('action', '')
+                tone = _classify_action_tone(action_text)
+                if tone == "buy":
+                    st.success(action_text)
+                elif tone == "sell":
+                    st.error(action_text)
+                else:
+                    st.info(action_text)
+                with st.expander("📜 點擊查看：易經原文與詳細現代解讀", expanded=False):
+                    st.markdown("#### 📖 易經原文 (The Source)")
+                    source_text = response_data.get('source', '')
+                    if source_text:
+                        st.markdown(source_text)
+                    else:
+                        st.markdown("_目前回應中未偵測到明確的易經原文段落。_")
+                    st.divider()
+                    st.markdown("#### 💡 現代解讀 (Deep Dive)")
+                    decoding_text = response_data.get('decoding', '')
+                    if decoding_text:
+                        st.markdown(decoding_text)
+                    else:
+                        st.markdown("_目前回應中未偵測到額外的現代金融解讀內容。_")
+                st.caption(
+                    "以上內容僅供研究與教育參考，不構成任何投資建議或買賣邀約，實際投資決策請自行評估風險。"
+                )
+        
+        # ===== 追問系統（獨立容器，不在 Oracle's Advice 框內） =====
+        if response_data:
+            render_followup_system(oracle, response_data, ai_answer, backend_ticker, current_market_state, market_type)
 
     else:
         # 尚未按下按鈕時，給予簡短提示

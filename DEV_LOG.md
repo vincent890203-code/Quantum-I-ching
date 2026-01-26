@@ -4066,3 +4066,176 @@ all_features_scaled[:, constant_features] = 0.0
 - ✅ 特徵提取失敗會優雅地處理錯誤
 
 ---
+
+## 2026-01-26 | Dashboard UI/UX 優化與視覺改進
+
+**日期**: 2026-01-26  
+**狀態**: ✅ 完成
+
+### 改動摘要
+
+本次更新主要針對 Dashboard 的使用者介面進行全面優化，包括深色模式支援、圖表樣式改進、AI 追問系統實作，以及多項視覺與互動體驗提升。
+
+### 主要功能改動
+
+#### 1. 網頁標題本地化
+- **改動**: 將 Dashboard 網頁標題從 "Quantum I-Ching" 改為中文 "量子易經"
+- **影響**: 提升中文使用者的親和力
+- **檔案**: `dashboard.py` (page_title, st.title)
+
+#### 2. K 線圖簡化
+- **改動**: 移除 MA20 和 MA60 移動平均線
+- **原因**: 簡化圖表，專注於 K 線本身
+- **檔案**: `dashboard.py` (移除 MA20/MA60 計算與繪圖代碼)
+
+#### 3. 問題固定化
+- **改動**: 將 "問題" 區塊固定為 "目前趨勢"，移除文字輸入框
+- **原因**: 簡化使用者操作，專注於核心功能
+- **檔案**: `dashboard.py` (將 st.text_area 改為固定字串)
+
+#### 4. AI 小幫手追問系統
+- **功能**: 在 Oracle's Advice 下方新增獨立的 AI 追問系統
+- **實作細節**:
+  - 使用 `st.session_state` 管理追問歷史 (`followup_history`)
+  - 使用 `st.form(clear_on_submit=True)` 捕獲使用者輸入
+  - 直接呼叫 `oracle.model.generate_content()` 取得 Gemini 回應
+  - 顯示問答討論串，支援清除所有追問
+- **關鍵特性**:
+  - 獨立的容器，不與 Oracle's Advice 混在一起
+  - 追問時不影響 Oracle's Advice 的顯示（使用快取機制）
+  - 載入狀態僅顯示在 AI 小幫手區塊內
+- **檔案**: `dashboard.py` (新增 `render_followup_system` 函數)
+
+#### 5. 深色模式自動偵測與支援
+- **功能**: 自動偵測使用者系統主題，提供高對比度顏色
+- **實作**:
+  - 使用 `@media (prefers-color-scheme: dark)` CSS 規則
+  - 針對側邊欄、按鈕、文字、輸入框等元件進行深色模式樣式調整
+  - 使用 JavaScript `window.matchMedia` 動態調整 Plotly 圖表顏色
+- **檔案**: `dashboard.py` (`_CUSTOM_CSS`, `_DARK_MODE_SCRIPT`)
+
+#### 6. Loading 訊息位置調整
+- **改動**: 將 "Analyzing Market Structure & Consulting Spirits..." 移到波動率爆發機率下方
+- **位置**: 與 Oracle's Advice 區塊對齊
+- **檔案**: `dashboard.py` (調整 spinner 位置)
+
+#### 7. Oracle's Advice 持久化
+- **功能**: Oracle's Advice 生成後不會因為追問而重新生成或消失
+- **實作**:
+  - 使用 `st.session_state[oracle_cache_key]` 快取 Oracle's Advice
+  - 使用 `st.session_state['last_consult_ticker']` 追蹤已諮詢的股票
+  - 確保追問時不觸發重新生成
+- **檔案**: `dashboard.py` (快取機制)
+
+#### 8. 圖表文字可讀性改進
+- **問題**: 在深色模式下，圖表文字（標題、座標軸標籤）為白色，難以閱讀
+- **解決方案**:
+  - 在 Python 中明確設定所有文字顏色為黑色 (`#000000`)
+  - 使用 JavaScript 強制覆蓋 Plotly 圖表顏色（始終使用白色背景、黑色文字）
+  - 使用 CSS `!important` 規則強制覆蓋
+  - 移除文字描邊和陰影效果，確保文字清晰
+- **檔案**: `dashboard.py` (fig.update_layout, _DARK_MODE_SCRIPT, _CUSTOM_CSS)
+
+#### 9. K 線圖樣式優化
+- **背景色塊**: 
+  - 實作縱向交替色塊（淺灰色 `#e8e8e8` 與白色 `#ffffff`）
+  - 根據日期範圍自動計算色塊數量（約每 14 天一個）
+  - 使用 Plotly `shapes` 功能實作
+- **網格線**:
+  - X 軸：移除網格線
+  - Y 軸：使用深灰色網格線 (`#808080`)
+- **軸線**:
+  - X, Y 軸線完全隱藏（使用 `rgba(0,0,0,0)` 和 `showline=False`）
+- **標籤對齊**:
+  - X 軸標籤置中對齊（使用 `ticklabelmode='period'`）
+- **檔案**: `dashboard.py` (K 線圖繪圖區塊)
+
+#### 10. 波動率圖表響應式設計
+- **功能**: 波動率圖表中的百分比數字自動適應螢幕大小並居中
+- **實作**: 使用 `autosize=True` 和響應式布局設定
+- **檔案**: `dashboard.py` (`plot_volatility_gauge` 函數)
+
+### 技術細節
+
+#### Session State 管理
+```python
+# 追問歷史
+st.session_state.setdefault('followup_history', [])
+
+# Oracle's Advice 快取
+oracle_cache_key = f'oracle_advice_{ticker}_{market_type}'
+if oracle_cache_key not in st.session_state:
+    # 生成並快取
+    st.session_state[oracle_cache_key] = advice_data
+```
+
+#### CSS 深色模式支援
+```css
+@media (prefers-color-scheme: dark) {
+    /* 側邊欄、按鈕、文字等深色模式樣式 */
+    .css-1d391kg { background-color: #1e1e1e !important; }
+    /* ... */
+}
+```
+
+#### JavaScript 動態圖表調整
+```javascript
+const darkModeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+// 強制圖表使用白色背景、黑色文字
+Plotly.relayout(plotDiv, {
+    'paper_bgcolor': '#ffffff',
+    'plot_bgcolor': '#ffffff',
+    'font.color': '#000000'
+});
+```
+
+#### Plotly 色塊實作
+```python
+shapes.append(dict(
+    type="rect",
+    xref="x",
+    yref="paper",
+    x0=start_date,
+    y0=0,
+    x1=end_date,
+    y1=1,
+    fillcolor=band_color,  # 淺灰或白色
+    opacity=1.0,
+    layer="below"
+))
+```
+
+### 修復的 Bug
+
+1. **AI 追問系統頁面重置問題**
+   - 問題: 輸入追問後頁面重置到初始狀態
+   - 解決: 使用 `st.session_state` 持久化狀態，正確處理表單提交
+
+2. **Oracle's Advice 重複顯示**
+   - 問題: 出現兩個 Oracle's Advice 區塊
+   - 解決: 重構代碼，分離解析和渲染邏輯
+
+3. **AI 小幫手載入時整頁變暗**
+   - 問題: 載入時整個區塊變暗
+   - 解決: 使用 `st.empty()` 和 `st.info()` 僅在 AI 小幫手區塊顯示載入訊息
+
+4. **圖表文字在深色模式下不可讀**
+   - 問題: 白色文字在深色背景下不可見
+   - 解決: 多層次強制覆蓋（Python 設定 + JavaScript + CSS）
+
+5. **波動率圖表數字對齊問題**
+   - 問題: 數字不居中
+   - 解決: 移除無效的 `align` 屬性，使用 Plotly 預設居中行為
+
+### 向後相容性
+
+- ✅ 所有改動都是向後相容的
+- ✅ 不影響現有功能
+- ✅ 深色模式為自動偵測，不影響淺色模式使用者
+- ✅ 圖表樣式改進不影響數據顯示
+
+### 檔案變更
+
+- `dashboard.py`: 大量 UI/UX 改進和 Bug 修復
+
+---
