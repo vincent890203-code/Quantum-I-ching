@@ -1211,18 +1211,6 @@ def main() -> None:
                         "Date" if "Date" in chart_df.columns else chart_df.columns[0]
                     )
 
-                    # 計算 MA20 / MA60 作為技術參考線
-                    if "Close" in chart_df.columns:
-                        chart_df["MA20"] = (
-                            chart_df["Close"].rolling(window=20).mean()
-                        )
-                        chart_df["MA60"] = (
-                            chart_df["Close"].rolling(window=60).mean()
-                        )
-                    else:
-                        chart_df["MA20"] = None
-                        chart_df["MA60"] = None
-
                     fig = go.Figure(
                         data=[
                             go.Candlestick(
@@ -1236,26 +1224,6 @@ def main() -> None:
                                 name="Price",
                             )
                         ]
-                    )
-
-                    # 加入 MA20 / MA60 線條
-                    fig.add_trace(
-                        go.Scatter(
-                            x=chart_df[date_col],
-                            y=chart_df["MA20"],
-                            mode="lines",
-                            line=dict(color="#facc15", width=1.5),
-                            name="MA20 (貞/Support)",
-                        )
-                    )
-                    fig.add_trace(
-                        go.Scatter(
-                            x=chart_df[date_col],
-                            y=chart_df["MA60"],
-                            mode="lines",
-                            line=dict(color="#a855f7", width=1.5),
-                            name="MA60 (悔/Resistance)",
-                        )
                     )
 
                     fig.update_layout(
