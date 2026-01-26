@@ -54,7 +54,7 @@ def _normalize_tw_name(name: str) -> str:
 # ===== Streamlit 基本設定 =====
 st.set_page_config(
     layout="wide",
-    page_title="Quantum I-Ching",
+    page_title="量子易經",
 )
 
 
@@ -1021,7 +1021,7 @@ def main() -> None:
         )
 
     # ===== 主畫面標題 =====
-    st.title("Quantum I-Ching 股市卜卦系統")
+    st.title("量子易經 股市卜卦系統")
     st.markdown(
         "結合 **量化價格結構** 與 **易經六十四卦** 的 AI 金融解讀介面。"
     )
