@@ -249,7 +249,7 @@ st.markdown(_CUSTOM_CSS, unsafe_allow_html=True)
 
 # ===== Oracle 初始化（資源快取） =====
 # 添加版本號以強制清除舊緩存
-_ORACLE_VERSION = "2.0"  # 當 Oracle 類簽名改變時，更新此版本號以清除緩存
+_ORACLE_VERSION = "2.1"  # 當 Oracle 類簽名改變時，更新此版本號以清除緩存（更新：修復象曰/小象顯示問題）
 
 @st.cache_resource(show_spinner="正在加載中")
 def get_oracle(_version: str = _ORACLE_VERSION) -> Oracle:
