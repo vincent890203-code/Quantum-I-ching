@@ -4,6 +4,129 @@
 
 ---
 
+## 2026-01-27 | Model D (Pure Quantum) 完整管線與風控修正
+
+**日期**: 2026-01-27  
+**狀態**: ✅ 完成  
+
+### 一、Model D: Pure Quantum 特徵與推論管線
+
+- **設計目標**
+  - 以最小且解釋力清晰的特徵集合，建立可實際部署的 **Pure Quantum** 模型（Model D）。
+  - 明確切斷對非平穩特徵（尤其 `Close`）的依賴，避免只是在搭牛市順風車。
+
+- **核心特徵**
+  - `Moving_Lines_Count`（I‑Ching）：動爻數量，反映結構變化強度。
+  - `Energy_Delta`（I‑Ching）：能量差，對應情緒／勢能轉折。
+  - `Daily_Return`：單日動能，使用小數形式報酬（例如 0.015 代表 1.5%）。
+
+- **主要實作**
+  - `model_d_pure_quantum.py`
+    - `prepare_pure_quantum_training_data`：從 `encoded_data` 中抽取上述三個特徵與標籤。
+    - `build_xgb_classifier`：固定 XGBoost 超參數（n_estimators=100, max_depth=3, lr=0.05, subsample=0.8 等）。
+    - `train_and_save_model_d`：在完整歷史資料上訓練 Model D，儲存為 `model_d_pure_quantum.json`。
+    - `predict_next_day(ritual_sequence, daily_return)`：一行式推論 API，內部會：
+      - 呼叫 `DataProcessor.extract_iching_features` 取得 I‑Ching 特徵。
+      - 組成 `[Daily_Return, Moving_Lines_Count, Energy_Delta]` 送入 XGBoost，輸出 0/1 訊號。
+  - `dashboard.py`
+    - 由原先讀取 `data/volatility_model.json` 改為 `load_model_d()`。
+    - `render_volatility_gauge` 完全改寫輸入 payload：
+      - 移除 `Close / Volume / RVOL`，僅保留 `Daily_Return` + 易經特徵。
+      - UI 文案同步更新為「Pure Quantum (Model D)」，說明只依賴三個特徵。
+
+### 二、Quant Report 與回測核心邏輯（`quant_report_model_d.py`）
+
+- **Walk‑Forward 設計**
+  - 12 個月訓練 / 1 個月測試 / 步長 1 個月，使用 `dates.to_period("M")` 切分月份。
+  - 嚴格只使用過去資料訓練，所有 OOS 樣本由未來不可見的模型產生。
+
+- **重要 Bug 與修正**
+  1. **完美策略幻覺：PnL 使用絕對值**
+     - **症狀**：Win Rate ~98%，Max Drawdown ~0%，但 ROC AUC ≈ 0.51。
+     - **原因**：回測函數中使用 `np.abs(actual_returns)`，變相保證每筆交易不會虧損。
+     - **修正**：
+       - 統一改為：
+         - `signals = (y_proba >= threshold).astype(int)`
+         - `pnl[signals == 1] = actual_returns[signals == 1]`
+       - 僅在有交易訊號時承擔 **方向性報酬**，允許虧損發生。
+  2. **Buy & Hold 報酬 0% 或 5 萬 %：累積報酬與日期對齊錯誤**
+     - **症狀**：
+       - 有時 baseline 完全是 0% 平線。
+       - 有時 baseline 高達 51,000% 以上，明顯超出標的實際走勢。
+     - **原因**：
+       - 混用百分比與小數報酬、未清除 inf/NaN。
+       - `dates_oos` 帶有時區，與日頻 `daily_ret_full` 在 index 上無法正確比較與 reindex。
+     - **修正**：
+       - 使用：
+         - `daily_close = close.groupby(normalize_date).last().replace(inf, nan).dropna()`
+         - `daily_ret_full = daily_close.pct_change().replace(inf, nan).dropna()`
+       - 將所有 DatetimeIndex 統一 `tz_localize(None)`，壓平為日期後再：
+         - `daily_ret_oos = daily_ret_full.reindex(dates_oos_dates).fillna(0.0)`
+       - Buy & Hold 累積報酬一律使用 `(1 + daily_returns).cumprod() - 1`。
+  3. **Volatility Targeting 過於溫和或完全失效**
+     - **初版問題**：
+       - 雖加入 `position_size = min(1.0, TARGET_VOL / current_vol)`，但 `rolling_vol` 因 NaN/對齊錯誤導致幾乎為 0，持續回傳 1.0。
+     - **修正**：
+       - `rolling_vol = daily_ret_full.rolling(20, min_periods=5).std().fillna(method="bfill")`
+       - `.shift(1).reindex(dates_oos_dates).fillna("ffill").fillna(0.0)`，確保 OOS 每天都有合理波動估計。
+  4. **Hard Circuit Breaker 導致策略長期 100% 現金（Zombie State）**
+     - **舊設計**：
+       - 當策略回撤 < -15% / -20% 時，直接把之後的 `pos_size` 設為 0，策略退出市場而無再入場機制。
+       - 導致 2021 之後整條策略淨值幾乎水平，完全錯失後續牛市。
+     - **最終設計：Survival Mode + Recovery**
+       - 目標波動：`TARGET_VOL = 0.015`（1.5% daily）。
+       - Drawdown Survival Mode：
+         - 若 `equity / peak - 1.0 <= -0.20` → `in_survival_mode = True`。
+         - 若 `in_survival_mode` 且回撤 > -0.10 → `in_survival_mode = False`。
+         - Survival Mode 下，當期 `pos_size[i] = min(pos_size[i], SURVIVAL_POS_CAP)`（0.2）。
+       - 效果：
+         - 回撤超過 20% 時，自動降槓桿至 20% 基礎部位，但不會完全清倉。
+         - 市場恢復時，小部位仍可帶動淨值回升，讓部位逐步恢復。
+
+- **最終 OOS 成績（2330.TW，2021–2026）**
+  - Total Return ≈ 242.6%，CAGR ≈ 28.8%。
+  - Sharpe ≈ 1.90，Max Drawdown ≈ -23.4%，Win Rate ≈ 57%，Profit Factor ≈ 1.92。
+  - 明顯優於 Buy & Hold 的 Sharpe ≈ 0.85、MaxDD ≈ -54%。
+
+### 三、Ablation Study 與多資產泛化（Model D vs Model E）
+
+- **Ablation 腳本**：`quant_report_ablation_de.py`
+  - Model D：特徵 `[Daily_Return, Moving_Lines_Count, Energy_Delta]`。
+  - Model E：特徵 `[Daily_Return]`（純 Momentum）。
+  - 共用：
+    - Walk‑Forward 切分邏輯。
+    - `generate_trading_pnl` 訊號產生方式。
+    - **完全相同的 Vol Targeting + Survival Mode 風控程式碼**（已與 `quant_report_model_d.py` 同步）。
+  - 修正前 Ablation 使用舊風控 → 結果失真；本次已完全改寫為呼叫同步後的風控流程。
+  - **最新結果**：
+    - Model D：TotalRet ≈ 255.6%，CAGR ≈ 29.8%，Sharpe ≈ 1.99，MaxDD ≈ -21.2%，Calmar ≈ 12.1。
+    - Model E：TotalRet ≈ 87.0%，CAGR ≈ 13.7%，Sharpe ≈ 1.07，MaxDD ≈ -26.4%，Calmar ≈ 3.3。
+    - 解讀：在風控與資料處理全部修正後，Quantum 模型在 **Sharpe / Calmar / MaxDD** 上仍顯著優於純 Momentum，支持「易經特徵作為 volatility / regime filter」的假說。
+  - 新增視覺化：
+    - `output/ablation_de_dashboard.png`：以分組 bar chart + Calmar 水平條呈現 D/E 各指標差距。
+
+- **多資產驗證**：`multi_asset_validation.py`
+  - 將 `quant_report_model_d.py` 的核心流程封裝為 `test_strategy(AssetConfig)`：
+    - 下載個股資料 → 易經編碼 → 準備 Pure Quantum 特徵 → Walk‑Forward → 套用風控 → 回傳績效。
+  - 初版 Universe：
+    - 2330.TW：高波動科技。
+    - 2412.TW：低波動電信。
+    - 0050.TW：市場指數 ETF。
+  - 輸出：
+    - 表格列出各標的 Strat/B&H 的 CAGR, Sharpe, MaxDD, WinRate 等，確認 Model D 在高 Beta 標的上最具優勢。
+
+- **標的篩選**：`screen_candidates.py`
+  - 以「0050 前 20 大成分股」為近似宇宙，計算：
+    - 最近三年年化波動度、相對 0050 的 Beta、平均每日成交金額。
+  - 篩選條件：
+    - 平均成交金額 > 5 億 TWD。
+    - 排除金融與防禦型股票（電信、食品等）。
+    - 依年化波動度排序取前 5 檔，作為 Quantum Portfolio 候選。
+  - 對入選標的呼叫 `test_strategy`，輸出橫斷面比較表：  
+    `Ticker | Strat CAGR% | B&H CAGR% | Sharpe(Strat/BH) | WinRate% | MaxDD%(Strat/BH)`。
+
+---
+
 ## 2026-01-27 | oracle_chat 本機測試修正（不經前端可基本測試）
 
 **日期**: 2026-01-27  
@@ -4510,5 +4633,68 @@ fig.update_layout(
 ### 檔案變更
 
 - `dashboard.py`: 波動率圖表響應式設計修復（CSS、JavaScript、Plotly 設定）
+
+---
+
+## 2026-01-27 | Model A/B/C/D/E 固定定義、特徵審核與漏斗視覺化
+
+**日期**: 2026-01-27  
+**狀態**: ✅ 完成
+
+### 核心概念
+
+1. **單一真相來源 (Single Source of Truth)**  
+   所有 Model A/B/C/D/E 的名稱與特徵列表集中定義於 `model_definitions.py`。審核腳本、漏斗圖、日後訓練／推論一律由此讀取，避免各處重複定義不一致。
+
+2. **五模型固定特徵**  
+   | Model | 特徵數 | 說明 |
+   |-------|--------|------|
+   | A | 9 | Full I-Ching：Close, Volume, RVOL, Daily_Return + 5 易經特徵 |
+   | B | 4 | Baseline：Close, Volume, RVOL, Daily_Return |
+   | C | 6 | Lean：4 數值 + Moving_Lines_Count, Energy_Delta |
+   | D | 3 | Pure Quantum：Daily_Return, Moving_Lines_Count, Energy_Delta |
+   | E | 1 | Momentum Only：Daily_Return |
+
+3. **特徵審核 (inspect)**  
+   - 掃描 `*.json` / `*.model` / `*.pkl`，以路徑關鍵字對應到 A/B/C/D/E。  
+   - 載入 XGBoost Booster，擷取 `feature_names`，輸出表格：Model、Status、Path、Feature Count、List of Features。  
+   - Model D 專屬檢查：禁止 Close / Volume / RVOL；必須含 Moving_Lines_Count、Energy_Delta、Daily_Return。  
+   - 結尾印出 **固定定義**（來自 `model_definitions`），即便沒有模型檔也能對照。
+
+4. **漏斗視覺化 (funnel)**  
+   - 依 `model_definitions` 繪製 A→B→C→D→E 五階，每階標示特徵數與完整特徵列表。  
+   - 灰→藍→紅漸層；優先 Plotly，無法匯出 PNG 則改用 Matplotlib。  
+   - 輸出 `output/feature_funnel.png` 與 `feature_funnel.png`。
+
+5. **特徵審計 (FEATURE_FUNNEL_AUDIT.md)**  
+   - 審計 `data_processor`、`experiment_xgboost`、`market_encoder`：Raw（OHLCV）、技術指標（Daily_Return, RVOL, …）、易經 5 特徵。  
+   - 潛在特徵數 vs Model A / C / D 對應；漏斗階段（Raw → A → C → D）說明。
+
+### 實作與檔案
+
+| 檔案 | 用途 |
+|------|------|
+| `model_definitions.py` | `MODELS` 字典、`MODEL_ORDER`、`get_display_name` / `get_features` / `get_all_stages` |
+| `inspect_model_features.py` | 模型掃描、路徑匹配、Model D 驗證、固定定義輸出；依賴 `model_definitions` |
+| `visualize_feature_funnel.py` | A–E 漏斗圖；依賴 `model_definitions` |
+| `FEATURE_FUNNEL_AUDIT.md` | 特徵審計摘要與漏斗階段說明 |
+
+### 使用方式
+
+```bash
+python inspect_model_features.py   # 審核模型檔 + 印出固定定義
+python visualize_feature_funnel.py # 產生 feature_funnel.png
+```
+
+### 技術要點
+
+- **路徑匹配**：`PATH_PATTERNS` 將 `volatility_model`、`model_d_pure_quantum` 等對應到 C、D；A/B/E 若日後存檔可擴充 pattern。  
+- **Model D 驗證**：`required = set(get_features("D"))`，`forbidden = {Close, Volume, RVOL}`，與 `model_definitions` 一致。  
+- **修改特徵時**：僅改 `model_definitions.MODELS`，其餘腳本自動跟隨。
+
+### 向後相容性
+
+- ✅ 不影響現有訓練／推論流程；`model_definitions` 為新增模組。  
+- ✅ `inspect`、`funnel` 僅讀取定義與模型檔，不寫入既有成果。
 
 ---

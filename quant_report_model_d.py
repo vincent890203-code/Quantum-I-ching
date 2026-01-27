@@ -588,12 +588,15 @@ def main() -> None:
     # 以「日期」為索引，取每日最後一筆收盤價來計算日報酬
     date_index = close_series.index.normalize()
     daily_close = close_series.groupby(date_index).last()
-    daily_ret_full = daily_close.pct_change().fillna(0.0)  # 已為小數，例如 0.015 代表 1.5%
+    # 先處理 NaN / inf，再計算日報酬
+    daily_close = daily_close.replace([np.inf, -np.inf], np.nan).dropna()
+    daily_ret_full = daily_close.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
 
-    # OOS 日期同樣壓平成日期，以確保能與 daily_ret_full 對齊
-    if getattr(dates_oos, "tz", None) is not None:
-        dates_oos = dates_oos.tz_localize(None)
-    dates_oos_dates = dates_oos.normalize()
+    # OOS 日期同樣壓平成日期，以確保能與 daily_ret_full / rolling_vol 對齊
+    dates_oos_idx = dates_oos
+    if getattr(dates_oos_idx, "tz", None) is not None:
+        dates_oos_idx = dates_oos_idx.tz_localize(None)
+    dates_oos_dates = dates_oos_idx.normalize()
 
     # 使用與策略相同的 OOS 日期索引（日期粒度），對齊 Buy & Hold 的日報酬
     daily_ret_oos = daily_ret_full.reindex(dates_oos_dates).fillna(0.0)
@@ -604,9 +607,16 @@ def main() -> None:
     #     sigma_d  = rolling 20d std of daily returns
     #     sigma_5  ≈ sigma_d * sqrt(5)
     #     Position_Size_t = min(1.0, Target_Vol / sigma_5_{t-1})
-    rolling_vol = daily_ret_full.rolling(window=20, min_periods=5).std()
-    # 使用 t-1 的波動度（shift(1)），再對齊到 OOS 日期
-    vol_oos = rolling_vol.shift(1).reindex(dates_oos)
+    rolling_vol = (
+        daily_ret_full.rolling(window=20, min_periods=5).std().fillna(method="bfill")
+    )
+    # 使用 t-1 的波動度（shift(1)），並在「日期」粒度上對齊到 OOS 交易視窗
+    vol_oos = (
+        rolling_vol.shift(1)
+        .reindex(dates_oos_dates)
+        .fillna(method="ffill")
+        .fillna(0.0)
+    )
     pos_size = np.ones_like(pnl_strategy_raw, dtype=float)
     vol_values = vol_oos.to_numpy()
     # 將日波動度換算為 5 日持有期間的預期波動度
@@ -616,19 +626,29 @@ def main() -> None:
     pos_size[valid_vol_mask] = np.minimum(1.0, TARGET_VOL / eff_vol_5d[valid_vol_mask])
     # 對 NaN 或 0 波動度，維持部位大小 = 1.0（不加槓桿也不縮放，等同全現金或全倉取決於 signal）
 
-    # 4.4 Drawdown Survival Mode：
-    #     若策略從高點回撤超過 20%，則將當期部位 cap 在 20%（而非完全退出），
-    #     讓策略以「最小倉位」持續參與市場，隨著回撤收斂自然恢復風險承擔能力。
+    # 4.4 Drawdown Survival Mode（具「進出」邏輯）：
+    #     - 當回撤 <= -20% 時，進入生存模式
+    #     - 當回撤恢復至 > -10% 時，離開生存模式
+    #     - 生存模式下當期部位上限為 0.3（而非清倉）
     equity = 1.0
     peak = 1.0
+    in_survival_mode = False
     for i in range(len(pnl_strategy_raw)):
-        # 根據目前累積回撤決定是否需要進入「生存模式」
         current_drawdown = equity / peak - 1.0
-        if current_drawdown <= MAX_DRAWDOWN_TRIGGER:
-            # 進入生存模式：將當日部位上限壓到 SURVIVAL_POS_CAP
-            pos_size[i] = min(pos_size[i], SURVIVAL_POS_CAP)
 
-        # 以調整後的部位計算當日報酬，更新權益與高點
+        # 1. 觸發生存模式：回撤 <= -20%
+        if current_drawdown <= MAX_DRAWDOWN_TRIGGER:
+            in_survival_mode = True
+
+        # 2. 復原條件：回撤改善至 > -10%，離開生存模式
+        if in_survival_mode and current_drawdown > -0.10:
+            in_survival_mode = False
+
+        # 3. 套用生存模式部位上限
+        if in_survival_mode:
+            pos_size[i] = min(pos_size[i], 0.3)
+
+        # 4. 以調整後的部位計算當日報酬，更新權益與高點
         ret_i = pnl_strategy_raw[i] * pos_size[i]
         equity *= (1.0 + ret_i)
         peak = max(peak, equity)
