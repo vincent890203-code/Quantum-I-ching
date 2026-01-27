@@ -1832,6 +1832,21 @@ def main() -> None:
                                 increasing_line_color="#22c55e",
                                 decreasing_line_color="#ef4444",
                                 name="Price",
+                                # 設定個別 trace 的 hover 樣式
+                                hovertemplate=(
+                                    "<b>%{x|%b %d, %Y}</b><br>" +
+                                    "open: %{open}<br>" +
+                                    "high: %{high}<br>" +
+                                    "low: %{low}<br>" +
+                                    "close: %{close}<extra></extra>"
+                                ),
+                                hoverlabel=dict(
+                                    bgcolor="#ffffff",  # 白色背景
+                                    bordercolor="#333333",  # 深灰色邊框
+                                    font_size=12,
+                                    font_family="Arial, sans-serif",
+                                    font_color="#000000",  # 黑色文字
+                                ),
                             )
                         ]
                     )
@@ -1858,6 +1873,15 @@ def main() -> None:
                         margin=dict(l=10, r=10, t=40, b=10),
                         # 全域字體設定（黑色，確保所有文字都可讀）
                         font=dict(color="#000000", size=12, family="Arial, sans-serif"),
+                        # 設定 tooltip 樣式，確保在深色背景下也能正常顯示
+                        hovermode="x unified",
+                        hoverlabel=dict(
+                            bgcolor="#ffffff",  # 白色背景
+                            bordercolor="#333333",  # 深灰色邊框
+                            font_size=12,
+                            font_family="Arial, sans-serif",
+                            font_color="#000000",  # 黑色文字
+                        ),
                     )
                     
                     # 添加縱向交替色塊（對齊 X 軸主要時間刻度）

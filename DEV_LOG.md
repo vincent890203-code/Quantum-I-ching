@@ -4239,3 +4239,128 @@ shapes.append(dict(
 - `dashboard.py`: 大量 UI/UX 改進和 Bug 修復
 
 ---
+
+## 2026-01-27 | Bug 修復與功能改進
+
+**日期**: 2026-01-27  
+**狀態**: ✅ 完成
+
+### 修復內容
+
+#### 1. K線圖 Tooltip 在深色背景下的顯示問題
+
+**問題描述**：
+- 在深色背景下，K線圖的 tooltip（詳細資料提示框）文字為黑色，背景也是黑色，導致完全無法閱讀
+
+**解決方案**：
+- 在 `go.Candlestick` 中明確設定 `hoverlabel` 樣式：
+  - `bgcolor="#ffffff"`：白色背景
+  - `font_color="#000000"`：黑色文字
+  - `bordercolor="#333333"`：深灰色邊框
+- 在 `fig.update_layout` 中設定全域 `hoverlabel` 樣式，確保一致性
+- 使用 `hovermode="x unified"` 統一顯示模式
+
+**檔案變更**：
+- `dashboard.py`：K線圖繪製部分（約 1824-1945 行）
+
+#### 2. 資料更新邏輯改進
+
+**問題描述**：
+- `yfinance` 的 `end` 參數是 exclusive（不包含），設定 `end=date.today()` 時只會取到昨天的資料
+- 無法自動取得今天（如果今天有交易）的最新資料
+
+**解決方案**：
+- 在 `MarketDataLoader.fetch_data()` 中檢查 `END_DATE` 是否為今天
+- 如果是今天，自動將 `end_date` 調整為明天，確保 `yfinance` 的 exclusive `end` 參數能包含今天
+- 添加日誌記錄，方便追蹤日期調整
+
+**檔案變更**：
+- `data_loader.py`：`fetch_data()` 方法（約 106-120 行）
+
+#### 3. 架構圖表語法錯誤修復
+
+**問題描述**：
+- `diagram_03_之卦策略決策樹.html` 和 `diagram_05_貞悔架構說明.html` 有 Mermaid 語法錯誤
+
+**解決方案**：
+- 將所有包含特殊字符的節點標籤用雙引號包裹
+- 確保 Mermaid 能正確解析節點標籤中的冒號、斜線、箭頭等特殊字符
+
+**檔案變更**：
+- `docs/architecture_diagrams/diagram_03_之卦策略決策樹.html`
+- `docs/architecture_diagrams/diagram_05_貞悔架構說明.html`
+
+### 技術細節
+
+#### K線圖 Tooltip 設定
+
+```python
+go.Candlestick(
+    # ... 其他參數 ...
+    hovertemplate=(
+        "<b>%{x|%b %d, %Y}</b><br>" +
+        "open: %{open}<br>" +
+        "high: %{high}<br>" +
+        "low: %{low}<br>" +
+        "close: %{close}<extra></extra>"
+    ),
+    hoverlabel=dict(
+        bgcolor="#ffffff",  # 白色背景
+        bordercolor="#333333",  # 深灰色邊框
+        font_size=12,
+        font_family="Arial, sans-serif",
+        font_color="#000000",  # 黑色文字
+    ),
+)
+
+fig.update_layout(
+    # ... 其他設定 ...
+    hovermode="x unified",
+    hoverlabel=dict(
+        bgcolor="#ffffff",
+        bordercolor="#333333",
+        font_size=12,
+        font_family="Arial, sans-serif",
+        font_color="#000000",
+    ),
+)
+```
+
+#### 資料更新邏輯
+
+```python
+# yfinance 的 end 參數是 exclusive（不包含），所以要取得包含今天在內的資料
+# 需要設定 end 為明天，這樣才能確保取得最新交易日資料
+end_date = settings.END_DATE
+try:
+    # 如果 END_DATE 是今天的日期，則設定為明天以確保包含今天
+    end_date_obj = date.fromisoformat(end_date) if isinstance(end_date, str) else end_date
+    if end_date_obj == date.today():
+        end_date = (date.today() + timedelta(days=1)).isoformat()
+        self.logger.debug(f"調整 end_date 為明天以確保包含今天: {end_date}")
+except (ValueError, AttributeError):
+    # 如果無法解析日期，使用原始值
+    pass
+```
+
+### 測試結果
+
+- ✅ K線圖 tooltip 在深色背景下正常顯示（白色背景、黑色文字）
+- ✅ 資料自動更新到最新交易日（包含今天，如果今天有交易）
+- ✅ 架構圖表語法錯誤已修復，可正常渲染
+
+### 向後相容性
+
+- ✅ 所有改動都是向後相容的
+- ✅ 不影響現有功能
+- ✅ Tooltip 樣式改進適用於所有背景模式
+- ✅ 資料更新邏輯改進不影響歷史資料查詢
+
+### 檔案變更
+
+- `dashboard.py`: K線圖 tooltip 樣式修復
+- `data_loader.py`: 資料更新邏輯改進
+- `docs/architecture_diagrams/diagram_03_之卦策略決策樹.html`: Mermaid 語法修復
+- `docs/architecture_diagrams/diagram_05_貞悔架構說明.html`: Mermaid 語法修復
+
+---

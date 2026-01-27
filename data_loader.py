@@ -4,6 +4,7 @@
 """
 
 import logging
+from datetime import date, timedelta
 from typing import Optional
 
 import pandas as pd
@@ -103,9 +104,22 @@ class MarketDataLoader:
                     f"Ticker 格式調整: {ticker} -> {processed_ticker}"
                 )
 
+        # yfinance 的 end 參數是 exclusive（不包含），所以要取得包含今天在內的資料
+        # 需要設定 end 為明天，這樣才能確保取得最新交易日資料
+        end_date = settings.END_DATE
+        try:
+            # 如果 END_DATE 是今天的日期，則設定為明天以確保包含今天
+            end_date_obj = date.fromisoformat(end_date) if isinstance(end_date, str) else end_date
+            if end_date_obj == date.today():
+                end_date = (date.today() + timedelta(days=1)).isoformat()
+                self.logger.debug(f"調整 end_date 為明天以確保包含今天: {end_date}")
+        except (ValueError, AttributeError):
+            # 如果無法解析日期，使用原始值
+            pass
+
         self.logger.info(
             f"開始下載股票資料: {processed_tickers}, "
-            f"日期範圍: {settings.START_DATE} 至 {settings.END_DATE}, "
+            f"日期範圍: {settings.START_DATE} 至 {end_date}, "
             f"市場類型: {market_type}"
         )
 
@@ -117,7 +131,7 @@ class MarketDataLoader:
                     ticker_obj = yf.Ticker(ticker)
                     data = ticker_obj.history(
                         start=settings.START_DATE,
-                        end=settings.END_DATE
+                        end=end_date
                     )
                     
                     if not data.empty:
@@ -139,7 +153,7 @@ class MarketDataLoader:
             data = yf.download(
                 tickers=processed_tickers,
                 start=settings.START_DATE,
-                end=settings.END_DATE,
+                end=end_date,
                 progress=False,  # 關閉進度條輸出，保持日誌整潔
                 # 注意：不同版本的 yfinance 可能參數不同
                 # show_errors 參數在某些版本中不存在，已移除
