@@ -695,10 +695,10 @@ Your goal is to interpret ancient I-Ching hexagrams into **actionable modern sto
 
 
 if __name__ == "__main__":
-    # 測試執行
+    # 本機測試（不經前端）：NVDA 為美股，須傳 market_type="US"
     try:
         oracle = Oracle()
-        answer = oracle.ask("NVDA", "Should I buy now?")
+        answer = oracle.ask("2330", "Should I buy now?", market_type="TW")
         print("\n" + "=" * 60)
         print("  Quantum I-Ching Oracle Response")
         print("=" * 60)

@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-01-27 | oracle_chat 本機測試修正（不經前端可基本測試）
+
+**日期**: 2026-01-27  
+**狀態**: ✅ 完成
+
+### 設計目標
+讓直接執行 `python oracle_chat.py` 時能正確取得市場資料並完成基本測試，且不改動任何共用邏輯，前端照樣可跑。
+
+### 問題背景
+- 本機測試原本呼叫 `oracle.ask("NVDA", "Should I buy now?")` 未傳 `market_type`。
+- `ask()` 未傳時會使用 `settings.MARKET_TYPE`（預設 `"TW"`），`data_loader` 會把 ticker 加成 `.TW`，導致 NVDA → NVDA.TW，下載失敗（「possibly delisted; no timezone found」）。
+- 前端始終傳入 `market_type=market_type`，故從前端跑不會遇到此問題。
+
+### 實作內容
+- **檔案**: `oracle_chat.py`
+- **區塊**: `if __name__ == "__main__"` 內之測試呼叫
+- **變更**: 本機測試改為在 `oracle.ask()` 中明確傳入 `market_type`（例如測美股傳 `market_type="US"`、測台股傳 `market_type="TW"`），並在註解中說明「本機測試須傳 market_type，避免依預設 TW 把美股代號當成 NVDA.TW」。
+
+### 影響範圍
+- **僅動到**: 本機測試那幾行，未改 `Oracle` 類別、`ask()` 簽名或共用邏輯。
+- **前端**: 不受影響，仍以 `oracle.ask(..., market_type=market_type)` 呼叫。
+
+---
+
 ## 2024-12-XX | 專案初始化
 
 ### 步驟 1: 建立專案配置模組 (`config.py`)
