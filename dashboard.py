@@ -10,11 +10,11 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import yfinance as yf
-import xgboost as xgb
 import numpy as np
 
 from oracle_chat import Oracle
 from data_processor import DataProcessor
+from model_d_pure_quantum import load_model_d
 
 
 # 常用台股公司名稱對應表（可依需求擴充）
@@ -840,25 +840,19 @@ def get_oracle(_version: str = _ORACLE_VERSION) -> Oracle:
     return Oracle()
 
 
-@st.cache_resource(show_spinner="正在載入波動性模型...")
-def load_volatility_model(model_path: str = "data/volatility_model.json") -> xgb.XGBClassifier | None:
-    """載入波動性預測模型.
-    
-    Args:
-        model_path: 模型檔案路徑。
+@st.cache_resource(show_spinner="正在載入波動性模型 (Model D)...")
+def load_volatility_model() -> object | None:
+    """載入 Pure Quantum 波動性預測模型 (Model D).
     
     Returns:
-        載入的 XGBoost 模型，如果檔案不存在則返回 None。
+        已載入的模型物件；若檔案不存在或載入失敗則回傳 None。
     """
-    if not os.path.exists(model_path):
-        return None
-    
     try:
-        model = xgb.XGBClassifier()
-        model.load_model(model_path)
-        return model
-    except Exception as e:
-        st.error(f"載入波動性模型時發生錯誤: {e}")
+        return load_model_d()
+    except FileNotFoundError:
+        return None
+    except Exception as e:  # pragma: no cover - 主要是環境/檔案錯誤
+        st.error(f"載入波動性模型 (Model D) 時發生錯誤: {e}")
         return None
 
 
@@ -1563,57 +1557,63 @@ def render_volatility_gauge(
     ritual_sequence: list[int],
     latest_row: pd.Series
 ) -> None:
-    """顯示波動率 Gauge Chart（簡約風格）.
+    """顯示波動率 Gauge Chart（簡約風格，Pure Quantum Model D）.
     
-    使用精簡版 XGBoost 模型預測波動性爆發機率，並以簡約的 Gauge Chart 視覺化。
+    使用 Pure Quantum XGBoost 模型（Model D）預測波動性爆發機率，
+    僅依賴三個特徵：
+        - Moving_Lines_Count
+        - Energy_Delta
+        - Daily_Return
     
     Args:
-        raw_df: 原始市場資料 DataFrame。
+        raw_df: 原始市場資料 DataFrame（此處僅用於取得當日日報酬）。
         ritual_sequence: 儀式數字序列。
-        latest_row: 最新一筆編碼資料（包含 Close, Volume, RVOL, Daily_Return）。
+        latest_row: 最新一筆編碼資料（需包含 Daily_Return）。
     """
-    # 載入模型
+    # 載入 Model D（Pure Quantum）
     model = load_volatility_model()
     if model is None:
-        st.warning("⚠️ 波動性模型尚未訓練，請先執行 `python save_model_c.py`")
+        st.warning("⚠️ 波動性模型 (Pure Quantum, Model D) 尚未訓練，請先執行 `python model_d_pure_quantum.py`")
         return
     
     try:
-        # 提取易經特徵
+        # 提取易經特徵（純 I-Ching）
         processor = DataProcessor()
         ritual_seq_str = "".join(str(n) for n in ritual_sequence)
         iching_features = processor.extract_iching_features(ritual_seq_str)
         
-        # 提取數值特徵（從最新一筆資料）
+        # 提取數值特徵：僅使用 Daily_Return 作為市場動能指標
         try:
-            close_val = float(latest_row['Close'])
-            volume_val = float(latest_row.get('Volume', 0))
-            rvol_val = float(latest_row.get('RVOL', 1.0))
-            daily_return_val = float(latest_row.get('Daily_Return', 0))
+            daily_return_val = float(latest_row.get('Daily_Return', 0.0))
         except (KeyError, ValueError) as e:
-            st.warning(f"無法提取數值特徵: {e}")
+            st.warning(f"無法提取 Daily_Return 特徵: {e}")
             return
         
-        # 只使用精簡特徵：Moving_Lines_Count 和 Energy_Delta
+        # 純 Quantum 特徵：Moving_Lines_Count 與 Energy_Delta
         moving_lines_count = iching_features[2]  # Moving_Lines_Count
         energy_delta = iching_features[3]  # Energy_Delta
         
-        # 組合特徵向量（順序必須與訓練時一致）
+        # 組合特徵向量（順序必須與 Model D 訓練時一致）
+        # 僅包含：Daily_Return, Moving_Lines_Count, Energy_Delta
         feature_vector = np.array([
-            close_val,              # Close
-            volume_val,             # Volume
-            rvol_val,               # RVOL
             daily_return_val,       # Daily_Return
             moving_lines_count,     # Moving_Lines_Count
             energy_delta            # Energy_Delta
         ]).reshape(1, -1)
         
-        # 預測波動性爆發機率
+        # 使用 Pure Quantum Model D 預測波動性爆發機率
         prob_breakout = model.predict_proba(feature_vector)[0, 1]
         prob_percent = prob_breakout * 100
         
         # 顯示標題（使用原生 help 參數）
-        st.subheader("波動率爆發機率 (Volatility Probability)", help="基於易經動爻與能量差計算的波動率擠壓指標。使用 XGBoost Model C 預測未來 5 天內波動性爆發（|Return_5d| > 3%）的機率。")
+        st.subheader(
+            "波動率爆發機率 (Volatility Probability - Pure Quantum Model D)",
+            help=(
+                "基於純 I-Ching + 動能特徵計算的波動率擠壓指標。"
+                "使用 Pure Quantum XGBoost 模型 (Model D)，僅依賴 Moving_Lines_Count、Energy_Delta、Daily_Return "
+                "預測未來 5 天內波動性爆發（|Return_5d| > 3%）的機率。"
+            ),
+        )
         
         # 使用新的簡約 Gauge Chart 函數
         fig = plot_volatility_gauge(prob_percent)
@@ -1626,30 +1626,8 @@ def render_volatility_gauge(
             f"動爻數量: {int(moving_lines_count)} | 能量變化: {energy_delta:.2f} | 預測機率: {prob_percent:.1f}%"
         )
         
-        # 顯示特徵值（用於調試，可選）
+        # 顯示特徵值（用於調試，可選）——僅顯示 Pure Quantum 三個特徵
         with st.expander("🔍 查看特徵值（用於調試）", expanded=False):
-            st.markdown(f"**數值特徵：**")
-            col1, col2 = st.columns([1, 3])
-            with col1:
-                st.text("Close:")
-            with col2:
-                st.text(f"{close_val:.2f}")
-            st.caption("當日股票交易結束時的最後一筆成交價格。")
-            
-            col1, col2 = st.columns([1, 3])
-            with col1:
-                st.text("Volume:")
-            with col2:
-                st.text(f"{volume_val:,.0f}")
-            st.caption("當日該股票交易的總股數。反映市場的活躍程度。")
-            
-            col1, col2 = st.columns([1, 3])
-            with col1:
-                st.text("RVOL:")
-            with col2:
-                st.text(f"{rvol_val:.2f}")
-            st.caption("Relative Volume。當日成交量與過去一段時間平均成交量的比值。RVOL > 1 代表今日成交量放大。")
-            
             col1, col2 = st.columns([1, 3])
             with col1:
                 st.text("Daily Return:")

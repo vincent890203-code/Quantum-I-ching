@@ -698,7 +698,8 @@ if __name__ == "__main__":
     # 本機測試（不經前端）：NVDA 為美股，須傳 market_type="US"
     try:
         oracle = Oracle()
-        answer = oracle.ask("2330", "Should I buy now?", market_type="TW")
+        # 與前端 dashboard.py 一致，統一使用「目前趨勢」作為預設提問
+        answer = oracle.ask("2330", "目前趨勢", market_type="TW")
         print("\n" + "=" * 60)
         print("  Quantum I-Ching Oracle Response")
         print("=" * 60)
