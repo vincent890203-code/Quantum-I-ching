@@ -4364,3 +4364,127 @@ except (ValueError, AttributeError):
 - `docs/architecture_diagrams/diagram_05_貞悔架構說明.html`: Mermaid 語法修復
 
 ---
+
+## 2026-01-27 | 波動率圖表響應式設計修復
+
+**日期**: 2026-01-27  
+**狀態**: ✅ 完成
+
+### 修復內容
+
+#### 波動率圖表在手機和縮放時的顯示問題
+
+**問題描述**：
+1. 在手機畫面下，波動率圖表中間的數字（百分比）顯示過大，影響可讀性
+2. 在電腦上縮放螢幕時，波動率圖表中間的文字會位移或消失
+
+**解決方案**：
+
+1. **減小初始字體大小**
+   - 數字字體：從 80 改為 48
+   - 標題字體：從 22 改為 16
+   - 刻度標籤：從 18 改為 12
+   - 指針線寬：從 5 改為 4
+
+2. **響應式設計改進**
+   - 移除固定高度（`height=450`），使用 `autosize=True` 讓圖表自動適應容器
+   - 添加 CSS 媒體查詢，根據螢幕大小動態調整字體：
+     - **手機**（< 768px）：數字 24-48px，標題 12-16px
+     - **平板**（768-1024px）：數字 36-56px，標題 14-18px
+     - **桌面**（> 1024px）：數字 40-56px，標題 14-18px
+
+3. **防止文字位移**
+   - 添加 CSS 確保文字始終居中（`text-anchor: middle`）
+   - 使用 `transform-origin: center center` 確保縮放時以中心為基準
+   - 添加 JavaScript 監聽視窗大小變化，動態調整字體大小
+   - 使用 `uirevision=True` 保持用戶交互狀態
+
+4. **優化邊距和佈局**
+   - 減小邊距（從 `l=60, r=60, t=90, b=60` 改為 `l=40, r=40, t=60, b=40`）
+   - 確保圖表容器在縮放時保持穩定
+
+### 技術細節
+
+#### CSS 響應式樣式
+
+```css
+/* 手機端：減小字體大小 */
+@media (max-width: 768px) {
+    .js-plotly-plot .gauge-number {
+        font-size: clamp(24px, 8vw, 48px) !important;
+    }
+    
+    .js-plotly-plot .gauge-title {
+        font-size: clamp(12px, 4vw, 16px) !important;
+    }
+}
+
+/* 確保數字和標題始終居中 */
+.js-plotly-plot text[class*="gauge"],
+.js-plotly-plot text[class*="number"],
+.js-plotly-plot text[class*="title"] {
+    text-anchor: middle !important;
+    dominant-baseline: middle !important;
+}
+```
+
+#### JavaScript 動態調整
+
+```javascript
+// 波動率圖表響應式調整函數
+function adjustVolatilityGauge() {
+    const containerWidth = container.offsetWidth || window.innerWidth;
+    const isMobile = containerWidth < 768;
+    const isTablet = containerWidth >= 768 && containerWidth < 1025;
+    
+    // 根據容器大小動態調整字體大小
+    let numberSize, titleSize;
+    if (isMobile) {
+        numberSize = Math.max(24, Math.min(48, containerWidth * 0.12));
+        titleSize = Math.max(12, Math.min(16, containerWidth * 0.04));
+    } else if (isTablet) {
+        numberSize = Math.max(36, Math.min(56, containerWidth * 0.08));
+        titleSize = Math.max(14, Math.min(18, containerWidth * 0.025));
+    } else {
+        numberSize = Math.max(40, Math.min(56, containerWidth * 0.06));
+        titleSize = Math.max(14, Math.min(18, containerWidth * 0.02));
+    }
+    
+    // 更新圖表字體大小
+    window.Plotly.relayout(plotDiv, {
+        'title.font.size': titleSize,
+        'number.font.size': numberSize
+    });
+}
+```
+
+#### Plotly 圖表設定
+
+```python
+fig.update_layout(
+    height=None,  # 讓 Plotly 自動計算高度
+    margin=dict(l=40, r=40, t=60, b=40),
+    autosize=True,
+    uirevision=True  # 保持用戶交互狀態
+)
+```
+
+### 測試結果
+
+- ✅ 手機上數字大小適中，不會過大
+- ✅ 電腦縮放時文字位置穩定，不會位移或消失
+- ✅ 圖表自動適應不同螢幕尺寸
+- ✅ 響應式設計在所有設備上正常工作
+
+### 向後相容性
+
+- ✅ 所有改動都是向後相容的
+- ✅ 不影響現有功能
+- ✅ 響應式設計自動適應，不影響桌面端正常使用
+- ✅ 圖表樣式改進不影響數據顯示
+
+### 檔案變更
+
+- `dashboard.py`: 波動率圖表響應式設計修復（CSS、JavaScript、Plotly 設定）
+
+---

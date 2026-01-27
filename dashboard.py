@@ -353,6 +353,84 @@ html, body, [data-testid="stAppViewContainer"] {
     stroke: #000000 !important;
 }
 
+/* 波動率圖表響應式設計 */
+.js-plotly-plot {
+    /* 確保圖表容器在縮放時保持穩定 */
+    position: relative;
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow: hidden;
+}
+
+/* 波動率圖表數字和標題的響應式字體大小 */
+.js-plotly-plot .gauge-number,
+.js-plotly-plot .gauge-title {
+    /* 使用相對單位，確保在縮放時保持比例 */
+    transform-origin: center center;
+    transform-box: fill-box;
+}
+
+/* 手機端：減小字體大小 */
+@media (max-width: 768px) {
+    .js-plotly-plot .gauge-number {
+        font-size: clamp(24px, 8vw, 48px) !important;
+    }
+    
+    .js-plotly-plot .gauge-title {
+        font-size: clamp(12px, 4vw, 16px) !important;
+    }
+    
+    /* 確保圖表在手機上不會溢出 */
+    .js-plotly-plot {
+        min-height: 300px;
+        max-height: 400px;
+    }
+}
+
+/* 平板端：中等字體大小 */
+@media (min-width: 769px) and (max-width: 1024px) {
+    .js-plotly-plot .gauge-number {
+        font-size: clamp(36px, 6vw, 56px) !important;
+    }
+    
+    .js-plotly-plot .gauge-title {
+        font-size: clamp(14px, 2.5vw, 18px) !important;
+    }
+}
+
+/* 桌面端：正常字體大小，但確保在縮放時保持穩定 */
+@media (min-width: 1025px) {
+    .js-plotly-plot .gauge-number {
+        font-size: clamp(40px, 4vw, 56px) !important;
+    }
+    
+    .js-plotly-plot .gauge-title {
+        font-size: clamp(14px, 1.5vw, 18px) !important;
+    }
+}
+
+/* 確保圖表在縮放時文字位置保持穩定 */
+.js-plotly-plot svg {
+    width: 100% !important;
+    height: auto !important;
+    max-width: 100% !important;
+}
+
+/* 防止圖表在縮放時文字位移 */
+.js-plotly-plot .gauge-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+
+/* 確保數字和標題始終居中 */
+.js-plotly-plot text[class*="gauge"],
+.js-plotly-plot text[class*="number"],
+.js-plotly-plot text[class*="title"] {
+    text-anchor: middle !important;
+    dominant-baseline: middle !important;
+}
+
 /* 隱藏 Streamlit 自動生成的標題錨點連結（無意義的連結圖標） */
 [data-testid="stHeaderActionElements"],
 .st-emotion-cache-gi0tri,
@@ -675,6 +753,66 @@ _DARK_MODE_SCRIPT = """
             setTimeout(adjustPlotlyForDarkMode, 1500);
         });
     }
+    
+    // 波動率圖表響應式調整函數
+    function adjustVolatilityGauge() {
+        const plotlyDivs = document.querySelectorAll('.js-plotly-plot');
+        plotlyDivs.forEach(function(plotDiv) {
+            if (window.Plotly) {
+                try {
+                    // 獲取圖表容器大小
+                    const container = plotDiv.closest('[data-testid="stPlotlyChart"]') || plotDiv.parentElement;
+                    if (!container) return;
+                    
+                    const containerWidth = container.offsetWidth || window.innerWidth;
+                    const isMobile = containerWidth < 768;
+                    const isTablet = containerWidth >= 768 && containerWidth < 1025;
+                    
+                    // 根據容器大小動態調整字體大小
+                    let numberSize, titleSize;
+                    if (isMobile) {
+                        numberSize = Math.max(24, Math.min(48, containerWidth * 0.12));
+                        titleSize = Math.max(12, Math.min(16, containerWidth * 0.04));
+                    } else if (isTablet) {
+                        numberSize = Math.max(36, Math.min(56, containerWidth * 0.08));
+                        titleSize = Math.max(14, Math.min(18, containerWidth * 0.025));
+                    } else {
+                        numberSize = Math.max(40, Math.min(56, containerWidth * 0.06));
+                        titleSize = Math.max(14, Math.min(18, containerWidth * 0.02));
+                    }
+                    
+                    // 更新圖表字體大小
+                    window.Plotly.relayout(plotDiv, {
+                        'title.font.size': titleSize,
+                        'number.font.size': numberSize
+                    });
+                } catch(e) {
+                    console.log('Volatility gauge adjustment error:', e);
+                }
+            }
+        });
+    }
+    
+    // 監聽視窗大小變化
+    let resizeTimeout;
+    window.addEventListener('resize', function() {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(function() {
+            adjustVolatilityGauge();
+        }, 250);
+    });
+    
+    // 初始調整和定期檢查
+    setTimeout(adjustVolatilityGauge, 500);
+    setTimeout(adjustVolatilityGauge, 1500);
+    setTimeout(adjustVolatilityGauge, 3000);
+    
+    // 監聽新圖表添加
+    const gaugeObserver = new MutationObserver(function() {
+        setTimeout(adjustVolatilityGauge, 100);
+        setTimeout(adjustVolatilityGauge, 500);
+    });
+    gaugeObserver.observe(document.body, {childList: true, subtree: true});
 })();
 </script>
 """
@@ -891,38 +1029,39 @@ def plot_volatility_gauge(probability: float) -> go.Figure:
         })
     
     # 創建半圓形儀表板 Gauge Chart（使用中心指針）
+    # 使用響應式字體大小，根據容器大小動態調整
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=probability,
         domain={'x': [0, 1], 'y': [0, 1]},
         title={
             'text': f"<b>{status_label}</b>",
-            'font': {'size': 22, 'family': "Arial, sans-serif", 'color': "#333333", 'weight': 'bold'}
+            'font': {'size': 16, 'family': "Arial, sans-serif", 'color': "#333333", 'weight': 'bold'}  # 減小標題字體
         },
         number={
-            'font': {'size': 80, 'color': number_color, 'family': "Arial, sans-serif", 'weight': 'bold'},
+            'font': {'size': 48, 'color': number_color, 'family': "Arial, sans-serif", 'weight': 'bold'},  # 減小數字字體，從 80 改為 48
             'suffix': '%',
             'valueformat': '.1f'
         },
         gauge={
             'axis': {
                 'range': [None, 100],
-                'tickwidth': 3,
+                'tickwidth': 2,
                 'tickcolor': "#333333",
                 'tickmode': 'linear',
                 'tick0': 0,
                 'dtick': 10,
-                'tickfont': {'size': 18, 'color': "#333333", 'family': "Arial, sans-serif", 'weight': 'bold'},  # 大幅增大刻度標籤
-                'ticklen': 12,
+                'tickfont': {'size': 12, 'color': "#333333", 'family': "Arial, sans-serif", 'weight': 'bold'},  # 減小刻度標籤字體
+                'ticklen': 8,
                 'ticklabelstep': 1
             },
-            'bar': {'color': "#000000", 'thickness': 0.2},  # 更粗的指針條
+            'bar': {'color': "#000000", 'thickness': 0.2},
             'bgcolor': "white",
             'borderwidth': 2,
             'bordercolor': "#cccccc",
             'steps': gradient_steps,  # 使用漸層 steps
             'threshold': {
-                'line': {'color': "#000000", 'width': 5},  # 更粗的指針線
+                'line': {'color': "#000000", 'width': 4},  # 稍微減小指針線寬度
                 'thickness': 0.95,
                 'value': probability  # 指針指向當前值（從中心延伸）
             }
@@ -931,15 +1070,19 @@ def plot_volatility_gauge(probability: float) -> go.Figure:
     
     # 更新佈局（白色背景，專業風格，響應式設計）
     fig.update_layout(
-        height=450,  # 進一步增加高度以容納更大的字體
-        margin=dict(l=60, r=60, t=90, b=60),
+        # 使用最小高度，讓圖表根據容器大小自動調整
+        # 移除固定高度，使用 autosize 讓圖表自動適應容器
+        height=None,  # 讓 Plotly 自動計算高度
+        margin=dict(l=40, r=40, t=60, b=40),  # 減小邊距，讓圖表有更多空間
         paper_bgcolor="white",
         plot_bgcolor="white",
         font={'color': "#333333", 'family': "Arial, sans-serif"},
         # 確保圖表自動適應容器寬度，數字自動居中
         autosize=True,
         # 使用響應式布局
-        template="plotly_white"
+        template="plotly_white",
+        # 確保圖表在縮放時保持比例
+        uirevision=True  # 保持用戶交互狀態
     )
     
     return fig
